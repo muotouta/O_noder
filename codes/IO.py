@@ -6,8 +6,8 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.0.1'
-__date__ = '2025.11.27'
+__version__ = '0.0.2'
+__date__ = '2025.11.29'
 
 
 import sys
@@ -67,11 +67,21 @@ class  IO:
 
             sheet_raw_answer_values = response.get('values', [])[1:]  # 第1要素はヘッダなので取り除く
             if len(sheet_raw_answer_values) > 0:  # 回答がある場合
-                print("AAAA")
+                valid_timestamps = []
+                for row in sheet_raw_answer_values:  # 全行のA列（日時文字列）を取り出し、変換を試みる
+                    if row and row[0]:  # 行が空でなく、かつA列に値がある場合
+                        ts_iso = self.convert_timedata(row[0], "StoF")
+                        if ts_iso:
+                            valid_timestamps.append(ts_iso)
+                
+                if valid_timestamps:  # 有効なタイムスタンプが存在する場合、その中の「最大値（最新）」を採用する
+                    self.partic_form_meta_info['last_timestamp'] = max(valid_timestamps)  # ISO8601形式の文字列は辞書順比較で日時の大小比較ができるため、max()が使える。
+                else:
+                    # print("Error in \"IO.init()\": no valid timestamp found.")  # データ行はあるが、有効な日時が一つも取れなかった場合のフォールバック
+                    self.partic_form_meta_info['last_timestamp'] = sheet_raw_answer_metadata.get('createdTime')
+                
                 self.partic_form_meta_info['all_answers_num'] = len(sheet_raw_answer_values)
-                self.partic_form_meta_info['last_timestamp'] = self.convert_timedata(sheet_raw_answer_values[-1][0], "StoF")  # -1:最後の行　の、0:A列
             else:  # 回答がない場合
-                print("BBBB")
                 self.partic_form_meta_info['all_answers_num'] = 0
                 sheet_raw_answer_metadata = self.DRIVE_SERVICE.files().get(
                     fileId=self.IDS['raw_answers'],
@@ -90,7 +100,7 @@ class  IO:
         """
 
         new_answer_nums = 0
-        print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")
+        # print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")
         try:
             response = self.FORM_SERVICE.forms().responses().list(
                 formId=self.IDS['partic_form'],
@@ -112,7 +122,7 @@ class  IO:
         except Exception as e:
             print(f"Error in \"IO.call_new_answers()\": {e}")
         
-        print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")
+        # print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")
 
         return new_answer_nums
 
@@ -172,7 +182,7 @@ class  IO:
         """
         日時データの形式を変換する関数
             method
-                ・StoF: スプレッドシートの日時データ形式の文字列を、フォームズの日時データ形式の文字列に変換
+                ・StoF: スプレッドシートの日時データ形式の文字列を、フォームズの日時データ形式（ISO8601）の文字列に変換
                 ・FtoS: 文字列フォームズの日時データ形式の文字列を、スプレッドシートの日時データ形式に変換
         """
 
@@ -193,6 +203,7 @@ class  IO:
         一つの未処理の回答answerに対して、datasheetsの各シートそれぞれ用の文字列をバリューとする辞書を返す。
         """
 
+        print(answer)
         time = answer.get('lastSubmittedTime')
         name = f"{self.partic_form_meta_info["all_answers_num"]+1}_{answer.get(self.QUESTIONS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
         prof_img_id = answer.get(self.QUESTIONS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
