@@ -6,8 +6,8 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.0.5'
-__date__ = '2025.11.30'
+__version__ = '0.1.0'
+__date__ = '2025.12.1'
 
 
 import sys
@@ -60,7 +60,7 @@ class  IO:
             sheet_raw_answer = self.SHEET_SERVICE.spreadsheets()
             response = sheet_raw_answer.values().get(
                 spreadsheetId=self.IDS['raw_answers'],
-                range=f"{RAW_SHEET}!A:B"  # 名前
+                range=f"{self.RAW_SHEET}!A:B"  # 名前と日付の情報を取れる範囲を取得する。
                 ).execute()
             
             if not response.get('values', []):
@@ -171,6 +171,39 @@ class  IO:
         """
 
         for counter, a_new_answer in enumerate(self.new_answers, start=0):  # 未処理の回答を一つずつ処理する。
+            # 現在の最終列を確認するために、1行目(ヘッダー行)だけを取得
+            try:  
+                response = self.SHEET_SERVICE.spreadsheets().values().get(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=f"{self.SHEET_NAMES["net"]}!1:1"  # 1行目全体
+                ).execute()
+
+            except Exception as e:
+                print(f"Error while making a column for the datasheets in \"IO.update_datasheets()\": {e}")
+            
+            next_col_num = self.partic_form_meta_info["all_answers_num"] + counter + 2  # データがある列数 + 1 が書き込み開始位置
+            start_col_letter = self.col_num_to_letter(next_col_num)  # 列番号をアルファベットに変換
+            target_range = f"{self.SHEET_NAMES["net"]}!{start_col_letter}1"  # 書き込む範囲を指定
+
+            # 末尾の行までの行列の、末尾の列を0で埋める。
+            new_column_data = [f"{self.partic_form_meta_info["all_answers_num"]+counter}_{a_new_answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"]  # ヘッダ（第1行）に名前を追加
+            for i in range(self.partic_form_meta_info["all_answers_num"] + counter - 1):
+                new_column_data.append(0)
+            body = {
+                "majorDimension": "COLUMNS",
+                'values' : [new_column_data]
+            }
+
+            try:
+                self.SHEET_SERVICE.spreadsheets().values().update(
+                    spreadsheetId=self.IDS['datasheets'], # 対象のスプレッドシートID
+                    range=target_range,
+                    valueInputOption="USER_ENTERED",      # 自動フォーマット（日付や数値の認識）
+                    body=body
+                ).execute()
+            except Exception as e:
+                print(f"Error while adding a column to the datasheets in \"IO.update_datasheets()\": {e}")
+
             # 各シートに順番に、最新の1行を書き込む。
             a_body = self.make_body(a_new_answer, counter)
             for a_sheet in list(self.SHEET_NAMES.keys()):
@@ -184,19 +217,13 @@ class  IO:
                     ).execute()
 
                 except Exception as e:
-                    print(f"Error in \"IO.update_datasheets()\": {e}")
+                    print(f"Error while adding a row to the datasheets in \"IO.update_datasheets()\": {e}")
 
-        # net_infoの、右上三角行列成分を0で埋める。
-        try:
-            pass
-        except Exception as e:
-            print(f"Error in \"IO.update_datasheets()\": {e}")
-
-
+            
     def update_form(self):
         """
         participants_formの知り合いの質問を更新するメソッド
-        引数a_new_answersで受け取った回答を知り合いの選択肢として追加する。
+        self.new_answersの回答を知り合いの選択肢として追加する。
         """
 
         targe_item_id = self.QUESTIONS['friends']
@@ -208,7 +235,7 @@ class  IO:
             # 現在のフォーム情報を取得
             current_form = self.FORM_SERVICE.forms().get(formId=self.IDS['partic_form']).execute()
 
-            # 対象のアイテム(質問)を探し、現在の選択肢リストと「インデックス(場所)」を抽出
+            # 対象のアイテム(質問)を探す。
             current_item = None
             target_index = -1
             for i, item in enumerate(current_form.get('items', [])):  # enumerateでインデックスを取得
@@ -217,10 +244,36 @@ class  IO:
                     target_index = i
                     break            
             if not current_item:
-                print("Error in \"IO.update_form()\": No correct question in the form.")
+                print("Error in \"IO.update_form()\": No proper question in the form.")
                 return
-            current_options = current_item['questionItem']['question']['choiceQuestion']['options']
+            options = current_item['questionItem']['question']['choiceQuestion']['options']  # 現在の選択肢リストと「インデックス(場所)」を抽出
 
+            # 既存の投稿のプロフィール情報を反映
+            sheet_raw_answer = self.SHEET_SERVICE.spreadsheets()
+            response = sheet_raw_answer.values().get(
+                spreadsheetId=self.IDS['raw_answers'],
+                range=f"{self.RAW_SHEET}!A:D"  # 名前とプロフィール画像の情報が取れる範囲を取得する。
+                ).execute()
+            sheet_raw_answer_values = response.get('values', [])[1:]  # 第1要素はヘッダなので取り除く
+            if not response.get('values', []):  # participants_formが無い場合
+                print("Error in \"IO.init()\": sheet \"participants_form\" not found.")
+                sys.exit(1)
+
+            for an_option in options:
+                register_num = int(an_option['value'].split("_")[0])  # 登録番号=名前の先頭の番号を取得
+
+                if register_num == 0:
+                    img = no_friends_img
+                else:
+                    if sheet_raw_answer_values[register_num-1][2] == "":  # 画像が選択されていない場合
+                        img = no_image_url
+                    else:
+                        img = url_base + sheet_raw_answer_values[register_num-1][2].split("=")[1]
+
+                if 'image' in an_option:  # 画像情報を削除してエラーを回避（画像URL問題を避けるため）
+                    an_option['image'] = {"sourceUri": img}
+
+            # 新しい投稿を反映
             for counter, an_answer in enumerate(self.new_answers):
                 # 回答情報を取得
                 name = f"{self.partic_form_meta_info["all_answers_num"]+counter}_{an_answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
@@ -234,11 +287,6 @@ class  IO:
                 else:
                     img = url_base + prof_img_id
 
-                # 画像情報を削除してエラーを回避（画像URL問題を避けるため）
-                for option in current_options:
-                    if 'image' in option:
-                        option['image'] = {"sourceUri": img}
-
                 # 新しい選択肢の追加
                 new_option = {
                     "value": name,
@@ -246,35 +294,33 @@ class  IO:
                         "sourceUri": img
                     }
                 }
-                current_options.append(new_option)
+                options.append(new_option)
 
-                # 更新リクエストの作成
-                update_body = {
-                    "requests": [
-                        {
-                            "updateItem": {
-                                "item": {
-                                    "itemId": targe_item_id,
-                                    "questionItem": {
-                                        "question": {
-                                            "choiceQuestion": {
-                                                "type": "CHECKBOX",
-                                                "options": current_options
-                                            }
+            # 更新リクエストの作成
+            update_body = {
+                "requests": [
+                    {
+                        "updateItem": {
+                            "item": {
+                                "itemId": targe_item_id,
+                                "questionItem": {
+                                    "question": {
+                                        "choiceQuestion": {
+                                            "type": "CHECKBOX",
+                                            "options": options
                                         }
                                     }
-                                },
-                                # 【修正箇所】locationをitemの外側（兄弟要素）として記述
-                                "location": {"index": target_index},
-                                "updateMask": "questionItem.question.choiceQuestion.options"
-                            }
+                                }
+                            },
+                            "location": {"index": target_index},
+                            "updateMask": "questionItem.question.choiceQuestion.options"
                         }
-                    ]
-                }
+                    }
+                ]
+            }
 
-                # API実行
-                self.FORM_SERVICE.forms().batchUpdate(formId=self.IDS['partic_form'], body=update_body).execute()
-                print("更新に成功しました。")
+            # API実行
+            self.FORM_SERVICE.forms().batchUpdate(formId=self.IDS['partic_form'], body=update_body).execute()
 
         except Exception as e:
             print(f"Error in \"IO.update_form()\": {e}")
@@ -396,3 +442,14 @@ class  IO:
         }
         
         return result
+
+
+    def col_num_to_letter(self, num):
+        """
+        列番号(1始まり)をA1記法の列文字(A, B, ..., Z, AA, AB...)に変換するヘルパー関数
+        """
+        string = ""
+        while num > 0:
+            num, remainder = divmod(num - 1, 26)
+            string = chr(65 + remainder) + string
+        return string

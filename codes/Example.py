@@ -6,8 +6,8 @@ O_noderの実行ファイル
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.0.2'
-__date__ = '2025.11.30'
+__version__ = '0.1.0'
+__date__ = '2025.12.1'
 
 import sys
 import os.path
@@ -35,13 +35,20 @@ RAW_SHEET = "Form_responses"
 # datasheets内のシートの識別ID
 SHEET_NAMES = {
     "partic" : "partic_info",
-    "net" : "net_info",
-    "form" : "form_src"
+    "net" : "net_info"
+    # "form" : "form_src"
 }
 
-# partic_formの質問の識別ID
+# partic_formのフォーム構成用の質問の識別ID
 QUESTIONS = {
-    'name' : "7157132c",
+    'name' : "0100d475",  
+    'prof_image' : "6f45dcdb",
+    'friends' : "6525c455"
+}
+
+# partic_formの回答用の質問の識別ID
+ANSWERS = {
+    'name' : "7157132c",  
     'prof_image' : "2737d529",
     'friends' : "1cfca697"
 }
@@ -63,7 +70,8 @@ def main():
     # 初期化
     init()
 
-    an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, QUESTIONS, CREDS)
+    an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS)
+
     # an_io.recreate_datasheets()
     # an_io.recreate_form()
 
@@ -113,7 +121,6 @@ def init():
         # 次回以降のためにトークンを保存
         with open(TOKEN_FILE, 'w') as token:
             token.write(CREDS.to_json())
-
 
 
 if __name__ == '__main__':
