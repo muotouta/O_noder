@@ -6,12 +6,13 @@ O_noderの実行ファイル
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.0.1'
-__date__ = '2025.11.27'
+__version__ = '0.0.2'
+__date__ = '2025.11.30'
 
 import sys
 import os.path
 import datetime
+import time
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -63,14 +64,23 @@ def main():
     init()
 
     an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, QUESTIONS, CREDS)
+    # an_io.recreate_datasheets()
+    # an_io.recreate_form()
 
     while True:
         print(datetime.datetime.now())
 
         if an_io.call_new_answers() > 0:
-            an_io.update_datasheets()
+            an_io.update_databese()  # 新規の回答に合わせてデータベース（ネット上のスプレッドシートとフォーム）上のデータを更新
 
+            # an_io.call_datasheets()  # 新規の回答に合わせてローカルの情報を更新
+
+
+        
         print()
+        time.sleep(1)
+
+
 
     return 0
 
@@ -94,7 +104,7 @@ def init():
             try:
                 CREDS.refresh(Request())
             except:
-                creds = None
+                CREDS = None
         
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)

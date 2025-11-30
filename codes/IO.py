@@ -6,7 +6,7 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.0.3'
+__version__ = '0.0.5'
 __date__ = '2025.11.30'
 
 
@@ -142,35 +142,17 @@ class  IO:
         return new_answer_nums
 
 
-    def recreate_datasheets(self):
+    def update_databese(self):
         """
-        datasheetsを、既存のものを破壊した後にparticipants_formから作り直すメソッド
+        datasheetsとparticipants_formを更新するメソッド
+        双方の更新後、new_answersにある回答をフラッシュする。
         """
-
-
-    def update_datasheets(self):
-        """
-        datasheetを更新するメソッド
-        new_answersにある回答を一つずつ処理し、new_answersを更新する。
-        """
-
-        #  datasheetsに保存
-        for a_new_answer in self.new_answers:  # 未処理の回答を一つずつ処理する。
-            a_body = self.make_body(a_new_answer)
-            for a_sheet in list(self.SHEET_NAMES.keys()):  # 各シートに順番に書き込む。
-                try:
-                    self.SHEET_SERVICE.spreadsheets().values().append(
-                        spreadsheetId=self.IDS['datasheets'],
-                        range=f"{self.SHEET_NAMES[a_sheet]}!A1",  # シート名を指定し、末尾に追加
-                        valueInputOption='USER_ENTERED',  # スプレッドシート上で入力したのと同じ挙動（日付などが自動変換される）
-                        insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
-                        body={'values' : [a_body[a_sheet]]}
-                    ).execute()
-
-                except Exception as e:
-                    print(f"Error in \"IO.update_datasheets()\": {e}")
         
-        # 回答者フォームのメタ情報を更新
+        for a_new_answer in self.new_answers:  # 未処理の回答を一つずつ処理する。
+            self.update_datasheets(a_new_answer)
+            self.uppdate_form(a_new_answer)
+
+        # 参加者フォームのメタ情報を更新
         if self.new_answers:
             new_timestamps = [x.get('lastSubmittedTime') for x in self.new_answers]
             if new_timestamps:  # new_answers が空でない場合のみ更新
@@ -180,17 +162,48 @@ class  IO:
         self.new_answers.clear()
         self.partic_form_meta_info['new_answers_num'] = 0
 
+
+    def update_datasheets(self, a_new_answer: str):
+        """
+        datasheetsを更新するメソッド
+        引数a_new_answersで受け取った回答をdatasheetsに追加する。
+        """
+
+        a_body = self.make_body(a_new_answer)
+        for a_sheet in list(self.SHEET_NAMES.keys()):  # 各シートに順番に書き込む。
+            try:
+                self.SHEET_SERVICE.spreadsheets().values().append(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=f"{self.SHEET_NAMES[a_sheet]}!A1",  # シート名を指定し、末尾に追加
+                    valueInputOption='USER_ENTERED',  # スプレッドシート上で入力したのと同じ挙動（日付などが自動変換される）
+                    insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
+                    body={'values' : [a_body[a_sheet]]}
+                ).execute()
+
+            except Exception as e:
+                print(f"Error in \"IO.update_datasheets()\": {e}")
+
+
+    def uppdate_form(self, a_new_answer: str):
+        """
+        participants_formの知り合いの質問を更新するメソッド
+        引数a_new_answersで受け取った回答を知り合いの選択肢として追加する。
+        """
+
+
+    def recreate_databese(self):
+        pass
+
+
+    def recreate_datasheets(self):
+        """
+        datasheetsを、既存のものを破壊した後にparticipants_formから作り直すメソッド
+        """
+
     
     def recreate_form(self):
         """
         participants_formの知り合いの質問を、既存のものを破壊した後にraw_answersから作り直すメソッド
-        """
-
-    
-    def uppdate_form(self):
-        """
-        participants_formの知り合いの質問を更新するメソッド
-        new_answersにある回答を一つずつ処理し、new_answersを更新する。
         """
 
     
