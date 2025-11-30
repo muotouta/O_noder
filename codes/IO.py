@@ -23,7 +23,8 @@ class  IO:
     IDS: dict
     RAW_SHEET: str
     SHEET_NAMES: dict
-    QUESTIONS: dict
+    QUESTIONS : dict
+    ANSWERS: dict
 
     DRIVE_SERVICE: googleapiclient.discovery 
     FORM_SERVICE: googleapiclient.discovery
@@ -37,7 +38,7 @@ class  IO:
     new_answers: list  # 取得した未処理の回答を保存するリスト。キューとして利用。
     
 
-    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, QUESTIONS, CREDS):
+    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS):
         """
         コンストラクタ
         """
@@ -47,6 +48,7 @@ class  IO:
         self.RAW_SHEET = RAW_SHEET
         self.SHEET_NAMES = SHEET_NAMES
         self.QUESTIONS = QUESTIONS
+        self.ANSWERS = ANSWERS
 
         # APIサービスを構築
         self.DRIVE_SERVICE = googleapiclient.discovery.build('drive', 'v3', credentials=CREDS)  # Google Drive APIサービスの構築
@@ -83,7 +85,7 @@ class  IO:
 
                     candidates = []
                     for each in response.get('responses', []):
-                        each_name = each.get('answers', {}).get(self.QUESTIONS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')  # 候補の名前を取得
+                        each_name = each.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')  # 候補の名前を取得
                         raw_time = each.get('lastSubmittedTime') or each.get('createTime')
                         each_time = self.convert_timedata(self.convert_timedata(raw_time, "FtoS"), "StoF")  # 一度スプレッドシートの形式にすることで精度を落とし、その上でフォームの日時形式にする。
                         if each_name == latest_answer[1] and each_time == low_latest_timestamp:
@@ -148,9 +150,8 @@ class  IO:
         双方の更新後、new_answersにある回答をフラッシュする。
         """
         
-        for a_new_answer in self.new_answers:  # 未処理の回答を一つずつ処理する。
-            self.update_datasheets(a_new_answer)
-            self.uppdate_form(a_new_answer)
+        self.update_datasheets()
+        self.update_form()
 
         # 参加者フォームのメタ情報を更新
         if self.new_answers:
@@ -163,32 +164,149 @@ class  IO:
         self.partic_form_meta_info['new_answers_num'] = 0
 
 
-    def update_datasheets(self, a_new_answer: str):
+    def update_datasheets(self):
         """
         datasheetsを更新するメソッド
-        引数a_new_answersで受け取った回答をdatasheetsに追加する。
+        self.new_answersの回答をdatasheetsに追加する。
         """
 
-        a_body = self.make_body(a_new_answer)
-        for a_sheet in list(self.SHEET_NAMES.keys()):  # 各シートに順番に書き込む。
-            try:
-                self.SHEET_SERVICE.spreadsheets().values().append(
-                    spreadsheetId=self.IDS['datasheets'],
-                    range=f"{self.SHEET_NAMES[a_sheet]}!A1",  # シート名を指定し、末尾に追加
-                    valueInputOption='USER_ENTERED',  # スプレッドシート上で入力したのと同じ挙動（日付などが自動変換される）
-                    insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
-                    body={'values' : [a_body[a_sheet]]}
-                ).execute()
+        for a_new_answer in self.new_answers:  # 未処理の回答を一つずつ処理する。
+            # 各シートに順番に、最新の1行を書き込む。
+            a_body = self.make_body(a_new_answer)
+            for a_sheet in list(self.SHEET_NAMES.keys()):
+                try:
+                    self.SHEET_SERVICE.spreadsheets().values().append(
+                        spreadsheetId=self.IDS['datasheets'],
+                        range=f"{self.SHEET_NAMES[a_sheet]}!A1",  # シート名を指定し、末尾に追加
+                        valueInputOption='USER_ENTERED',  # スプレッドシート上で入力したのと同じ挙動（日付などが自動変換される）
+                        insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
+                        body={'values' : [a_body[a_sheet]]}
+                    ).execute()
 
-            except Exception as e:
-                print(f"Error in \"IO.update_datasheets()\": {e}")
+                except Exception as e:
+                    print(f"Error in \"IO.update_datasheets()\": {e}")
+
+        # net_infoの、右上三角行列成分を0で埋める。
+        try:
+            pass
+        except Exception as e:
+            print(f"Error in \"IO.update_datasheets()\": {e}")
 
 
-    def uppdate_form(self, a_new_answer: str):
+
+    def update_form(self):
         """
         participants_formの知り合いの質問を更新するメソッド
         引数a_new_answersで受け取った回答を知り合いの選択肢として追加する。
         """
+
+        try:
+            form_metadata = self.FORM_SERVICE.forms().get(formId=self.IDS['partic_form']).execute()
+
+            target_item = None
+            target_item_id = None
+            
+            # アイテム検索
+            for item in form_metadata.get('items', []):
+                question = item.get('questionItem', {}).get('question', {})
+                # QUESTIONS (Item ID) または ANSWERS (Question ID) のどちらかで一致を確認
+                if item.get('itemId') == self.QUESTIONS['friends'] or question.get('questionId') == self.QUESTIONS['friends']:
+                    target_item = item
+                    target_item_id = item.get('itemId')
+                    break
+            
+            # アイテムが見つからなかった場合のガード処理
+            if target_item is None:
+                print(f"Error in \"IO.update_form()\": Question ID '{self.QUESTIONS['friends']}' not found in the form.")
+                return
+
+            # 既存の選択肢リストを取得 & クリーニング
+            choice_question = target_item.get('questionItem', {}).get('question', {}).get('choiceQuestion', {})
+            current_options = choice_question.get('options', [])
+            question_type = choice_question.get('type')
+            
+            clean_current_options = []
+            existing_values = set()
+            for opt in current_options:
+                val = opt.get('value', '')
+                opt_dict = {
+                    'value': val,
+                    'isOther': opt.get('isOther', False)
+                }
+                # sourceUriがないimageオブジェクトをコピーしないように注意
+                clean_current_options.append(opt_dict)
+                existing_values.add(val)
+
+            # 新しい名前と画像のペアを取得
+            new_entries = []
+            for an_answer in self.new_answers:
+                answers_in_resp = an_answer.get('answers', {})
+                # ANSWERS (Question ID) を使用
+                name_ans = answers_in_resp.get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')
+                img_id = answers_in_resp.get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
+                
+                if name_ans:
+                    full_name = f"{self.partic_form_meta_info['all_answers_num']}_{name_ans}"
+                    img_url = None
+                    if img_id:
+                        img_url = f"https://drive.google.com/uc?export=view&id={img_id}"
+
+                    new_entries.append({
+                        "name": full_name,
+                        "img_url": img_url
+                    })
+
+            # 更新用リストの作成
+            updated_options = list(clean_current_options)
+            is_updated = False
+            for entry in new_entries:
+                name = entry['name']
+                url = entry['img_url']
+
+                if name not in existing_values:
+                    new_option = {
+                        'value': name, 
+                        'isOther': False
+                    }
+                    if url:
+                         new_option['image'] = {'sourceUri': url}
+                    
+                    updated_options.append(new_option)
+                    existing_values.add(name)
+                    is_updated = True
+            
+            if not is_updated:
+                return
+
+            # フォームを更新
+            # location は削除しました（更新処理が無視される原因となるため）
+            update_body = {
+                "requests": [
+                    {
+                        "updateItem": {
+                            "item": {
+                                "itemId": target_item_id,
+                                "questionItem": {
+                                    "question": {
+                                        "choiceQuestion": {
+                                            "type": question_type,
+                                            "options": updated_options
+                                        }
+                                    }
+                                }
+                            },
+                            "updateMask": "questionItem.question.choiceQuestion.options"
+                        }
+                    }
+                ]
+            }
+            self.FORM_SERVICE.forms().batchUpdate(
+                formId=self.IDS['partic_form'], 
+                body=update_body
+            ).execute()
+
+        except Exception as e:
+            print(f"Error in \"IO.update_form()\": {e}")
 
 
     def recreate_databese(self):
@@ -264,9 +382,9 @@ class  IO:
         """
 
         time = answer.get('lastSubmittedTime')
-        name = f"{self.partic_form_meta_info["all_answers_num"]}_{answer.get('answers', {}).get(self.QUESTIONS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
-        prof_img_id = answer.get('answers', {}).get(self.QUESTIONS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
-        friends = [x.get('value') for x in answer.get('answers', {}).get(self.QUESTIONS["friends"], {}).get('textAnswers', {}).get('answers', [])]
+        name = f"{self.partic_form_meta_info["all_answers_num"]}_{answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+        prof_img_id = answer.get('answers', {}).get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
+        friends = [x.get('value') for x in answer.get('answers', {}).get(self.ANSWERS["friends"], {}).get('textAnswers', {}).get('answers', [])]
 
         # partic_info用のデータを作成
         partic_line = [
