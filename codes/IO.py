@@ -124,7 +124,7 @@ class  IO:
                 formId=self.IDS['partic_form'],
                 filter=f"timestamp >= {self.partic_form_meta_info['last_timestamp']}"
                 ).execute()  # last_timestamp以後の回答のみを取得する。
-            
+
             raw_responses = response.get('responses', [])
             self.new_answers = []
             for resp in raw_responses:
@@ -170,9 +170,9 @@ class  IO:
         self.new_answersの回答をdatasheetsに追加する。
         """
 
-        for a_new_answer in self.new_answers:  # 未処理の回答を一つずつ処理する。
+        for counter, a_new_answer in enumerate(self.new_answers, start=0):  # 未処理の回答を一つずつ処理する。
             # 各シートに順番に、最新の1行を書き込む。
-            a_body = self.make_body(a_new_answer)
+            a_body = self.make_body(a_new_answer, counter)
             for a_sheet in list(self.SHEET_NAMES.keys()):
                 try:
                     self.SHEET_SERVICE.spreadsheets().values().append(
@@ -193,117 +193,88 @@ class  IO:
             print(f"Error in \"IO.update_datasheets()\": {e}")
 
 
-
     def update_form(self):
         """
         participants_formの知り合いの質問を更新するメソッド
         引数a_new_answersで受け取った回答を知り合いの選択肢として追加する。
         """
 
+        targe_item_id = self.QUESTIONS['friends']
+        url_base = "https://drive.google.com/uc?export=view&id="
+        no_friends_img = url_base + "1JeCihM9JrBho6ZHnP9MY6aL8ngEGAFhB"
+        no_image_url = url_base + "1hVD7XBwRcpp46XvQSl-hjW70JgfKsKfU"
+
         try:
-            form_metadata = self.FORM_SERVICE.forms().get(formId=self.IDS['partic_form']).execute()
+            # 現在のフォーム情報を取得
+            current_form = self.FORM_SERVICE.forms().get(formId=self.IDS['partic_form']).execute()
 
-            target_item = None
-            target_item_id = None
-            
-            # アイテム検索
-            for item in form_metadata.get('items', []):
-                question = item.get('questionItem', {}).get('question', {})
-                # QUESTIONS (Item ID) または ANSWERS (Question ID) のどちらかで一致を確認
-                if item.get('itemId') == self.QUESTIONS['friends'] or question.get('questionId') == self.QUESTIONS['friends']:
-                    target_item = item
-                    target_item_id = item.get('itemId')
-                    break
-            
-            # アイテムが見つからなかった場合のガード処理
-            if target_item is None:
-                print(f"Error in \"IO.update_form()\": Question ID '{self.QUESTIONS['friends']}' not found in the form.")
+            # 対象のアイテム(質問)を探し、現在の選択肢リストと「インデックス(場所)」を抽出
+            current_item = None
+            target_index = -1
+            for i, item in enumerate(current_form.get('items', [])):  # enumerateでインデックスを取得
+                if item.get('itemId') == targe_item_id:
+                    current_item = item
+                    target_index = i
+                    break            
+            if not current_item:
+                print("Error in \"IO.update_form()\": No correct question in the form.")
                 return
+            current_options = current_item['questionItem']['question']['choiceQuestion']['options']
 
-            # 既存の選択肢リストを取得 & クリーニング
-            choice_question = target_item.get('questionItem', {}).get('question', {}).get('choiceQuestion', {})
-            current_options = choice_question.get('options', [])
-            question_type = choice_question.get('type')
-            
-            clean_current_options = []
-            existing_values = set()
-            for opt in current_options:
-                val = opt.get('value', '')
-                opt_dict = {
-                    'value': val,
-                    'isOther': opt.get('isOther', False)
-                }
-                # sourceUriがないimageオブジェクトをコピーしないように注意
-                clean_current_options.append(opt_dict)
-                existing_values.add(val)
+            for counter, an_answer in enumerate(self.new_answers):
+                # 回答情報を取得
+                name = f"{self.partic_form_meta_info["all_answers_num"]+counter}_{an_answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+                prof_img_id = an_answer.get('answers', {}).get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
 
-            # 新しい名前と画像のペアを取得
-            new_entries = []
-            for an_answer in self.new_answers:
-                answers_in_resp = an_answer.get('answers', {})
-                # ANSWERS (Question ID) を使用
-                name_ans = answers_in_resp.get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')
-                img_id = answers_in_resp.get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
-                
-                if name_ans:
-                    full_name = f"{self.partic_form_meta_info['all_answers_num']}_{name_ans}"
-                    img_url = None
-                    if img_id:
-                        img_url = f"https://drive.google.com/uc?export=view&id={img_id}"
+                # 採用する画像を選ぶ
+                if name == "0_No friends / なし":
+                    img = no_friends_img
+                elif prof_img_id == None:  # 画像が選択されていない場合
+                    img = no_image_url
+                else:
+                    img = url_base + prof_img_id
 
-                    new_entries.append({
-                        "name": full_name,
-                        "img_url": img_url
-                    })
+                # 画像情報を削除してエラーを回避（画像URL問題を避けるため）
+                for option in current_options:
+                    if 'image' in option:
+                        option['image'] = {"sourceUri": img}
 
-            # 更新用リストの作成
-            updated_options = list(clean_current_options)
-            is_updated = False
-            for entry in new_entries:
-                name = entry['name']
-                url = entry['img_url']
-
-                if name not in existing_values:
-                    new_option = {
-                        'value': name, 
-                        'isOther': False
+                # 新しい選択肢の追加
+                new_option = {
+                    "value": name,
+                    "image": {
+                        "sourceUri": img
                     }
-                    if url:
-                         new_option['image'] = {'sourceUri': url}
-                    
-                    updated_options.append(new_option)
-                    existing_values.add(name)
-                    is_updated = True
-            
-            if not is_updated:
-                return
+                }
+                current_options.append(new_option)
 
-            # フォームを更新
-            # location は削除しました（更新処理が無視される原因となるため）
-            update_body = {
-                "requests": [
-                    {
-                        "updateItem": {
-                            "item": {
-                                "itemId": target_item_id,
-                                "questionItem": {
-                                    "question": {
-                                        "choiceQuestion": {
-                                            "type": question_type,
-                                            "options": updated_options
+                # 更新リクエストの作成
+                update_body = {
+                    "requests": [
+                        {
+                            "updateItem": {
+                                "item": {
+                                    "itemId": targe_item_id,
+                                    "questionItem": {
+                                        "question": {
+                                            "choiceQuestion": {
+                                                "type": "CHECKBOX",
+                                                "options": current_options
+                                            }
                                         }
                                     }
-                                }
-                            },
-                            "updateMask": "questionItem.question.choiceQuestion.options"
+                                },
+                                # 【修正箇所】locationをitemの外側（兄弟要素）として記述
+                                "location": {"index": target_index},
+                                "updateMask": "questionItem.question.choiceQuestion.options"
+                            }
                         }
-                    }
-                ]
-            }
-            self.FORM_SERVICE.forms().batchUpdate(
-                formId=self.IDS['partic_form'], 
-                body=update_body
-            ).execute()
+                    ]
+                }
+
+                # API実行
+                self.FORM_SERVICE.forms().batchUpdate(formId=self.IDS['partic_form'], body=update_body).execute()
+                print("更新に成功しました。")
 
         except Exception as e:
             print(f"Error in \"IO.update_form()\": {e}")
@@ -375,14 +346,14 @@ class  IO:
         return output_str
     
 
-    def make_body(self, answer):
+    def make_body(self, answer, counter: int):
         """
         未処理の回答の情報を、datasheetsの各シート用の文字列に変換するメソッド
         一つの未処理の回答answerに対して、datasheetsの各シートそれぞれ用の文字列をバリューとする辞書を返す。
         """
 
         time = answer.get('lastSubmittedTime')
-        name = f"{self.partic_form_meta_info["all_answers_num"]}_{answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+        name = f"{self.partic_form_meta_info["all_answers_num"]+counter}_{answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
         prof_img_id = answer.get('answers', {}).get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
         friends = [x.get('value') for x in answer.get('answers', {}).get(self.ANSWERS["friends"], {}).get('textAnswers', {}).get('answers', [])]
 
@@ -395,7 +366,7 @@ class  IO:
 
         # net_info用のデータを作成
         net_line = [name]
-        counter = 1
+        counter = 0
         if friends:
             while counter <= self.partic_form_meta_info["all_answers_num"]:
                 for each in friends:
@@ -416,12 +387,12 @@ class  IO:
                 counter += 1
 
         # form_src用のデータを作成
-        form_line = [1, 1, 1]
+        # form_line = [1, 1, 1]
 
         result = {
             "partic" : partic_line,
-            "net" : net_line,
-            "form" : form_line
+            "net" : net_line
+            # "form" : form_line
         }
         
         return result
