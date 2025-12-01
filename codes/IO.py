@@ -436,14 +436,95 @@ class  IO:
         datasheetsとparticipants_formのネットワーク情報の選択肢を、既存のものを破壊した後にparticipants_formから作り直すメソッド
         """
 
-        # datasheetsの内容と、 participants_formのネットワーク情報の選択肢を「0_No friends / なし」以外すべて消去する。
+        # datasheetsの内容をすべて消去する。
+        for a_sheet in list(self.SHEET_NAMES.keys()):
+            try:
+                self.SHEET_SERVICE.spreadsheets().values().clear(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=self.SHEET_NAMES[a_sheet]
+                ).execute()
+            except Exception as e:
+                print(f"Error while deleting datasheets in \"recreate_databese()\": {e}")
 
-        # datasheetsとparticipants_formの最初のフォーマットを整える。
+        # net_infoの最初のフォーマットを整える。
+        try:
+            self.SHEET_SERVICE.spreadsheets().values().update(
+                spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                range=f"{self.SHEET_NAMES['net']}!A1",  # 1行1列成分から書き込む。
+                valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                body={'values' : [["-", self.NO_FRIENDS_NAME]]}
+            ).execute()
+        except Exception as e:
+            print(f"Error while writing first format to the datasheets in \"IO.recreate_databese()\": {e}")
+
+        target_title = 'Participants List / 参加者リスト'
+        retain_option = "0_No friends / なし"
+        url_base = "https://drive.google.com/uc?export=view&id="
+        no_friends_img = url_base + "1JeCihM9JrBho6ZHnP9MY6aL8ngEGAFhB"
+        
+        # 対象の質問項目（Item）と現在の選択肢を特定
+        form_data = self.FORM_SERVICE.forms().get(formId=self.IDS['partic_form']).execute()  # 現在のフォーム情報を取得
+        target_item = None
+        target_index = 0 # インデックスを保持する変数を追加
+
+        # enumerateを使って、アイテムと同時にインデックス(i)も取得する
+        for i, item in enumerate(form_data.get('items', [])):
+            if item.get('title') == target_title:
+                target_item = item
+                target_index = i # インデックスを保存
+                break
+
+        if not target_item:
+            print(f"Error in \"IO.recreate_databese()\": Not found the question {target_title}")
+            return # エラー時はここで中断したほうが安全です
+        else:
+            target_item_id = target_item['itemId']
+
+        # 新しい選択肢リストを作成（保持対象以外を削除）
+        new_option = {
+            "value": retain_option,
+            "image": {
+                "sourceUri": no_friends_img
+            }
+        }
+
+        # APIリクエスト（batchUpdate）の作成
+        update_body = {
+            "requests": [
+                {
+                    "updateItem": {
+                        "item": {
+                            "itemId": target_item_id,
+                            "questionItem": {
+                                "question": {
+                                    "choiceQuestion": {
+                                        "type": "CHECKBOX",
+                                        "options": [new_option]
+                                    }
+                                }
+                            }
+                        },
+                        "location": {"index": target_index},  # 場所(index)を指定することで "A Location is required" エラーを回避
+                        "updateMask": "questionItem.question.choiceQuestion.options"
+                    }
+                }
+            ]
+        }
+
+        # APIを実行して更新
+        try:
+            self.FORM_SERVICE.forms().batchUpdate(
+                formId=self.IDS['partic_form'], 
+                body=update_body
+            ).execute()
+            
+        except Exception as e:
+            print(f"Error while resting \"participants_form\" in \"IO.recreate_form()\":{e}")
 
 
         self.set_all_answers_as_new()
         self.set_datasheets()
-        self.update_form
+        self.update_form()
 
         # 処理した新しい回答のキューを削除
         self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
