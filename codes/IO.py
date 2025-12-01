@@ -6,11 +6,12 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 __date__ = '2025.12.1'
 
 
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 import googleapiclient.discovery
 
@@ -36,6 +37,15 @@ class  IO:
         "last_timestamp": None  # フォームの形式
     }
     new_answers: list  # 取得した未処理の回答を保存するリスト。キューとして利用。
+
+    NO_FRIENDS_NAME = "0_No friends / なし"  # participants_formのネットワーク情報の質問の初期選択肢
+    ADDITIONAL_COLUMN = 30  # スプレッドシートの列を増やすときに、一度に増やす列の数
+
+    # APIの制限で1分間に60回までしか書き込みリクエストができず、それを超えるとエラーになるので、リクエストのレートに制限をかけるための、書き込み状況を監視する変数
+    timer = time.time()
+    write_count = 0  # 書き込み回数を記録
+    COUNT_THRESHOLD = 56  # 連続書き込み回数の上限
+    LIMIT = 60  # 連続書き込み回数の上限を考える時間の長さ
     
 
     def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS):
@@ -56,6 +66,7 @@ class  IO:
         self.SHEET_SERVICE = googleapiclient.discovery.build('sheets', 'v4', credentials=CREDS)  # Google Sheet APIサービスの構築
 
         # 回答情報を初期設定
+        self.new_answers = []
         try:  # raw_answerのタイムスタンプ情報のみを取得する。
             sheet_raw_answer = self.SHEET_SERVICE.spreadsheets()
             response = sheet_raw_answer.values().get(
@@ -113,12 +124,11 @@ class  IO:
 
     def call_new_answers(self):
         """
-        呼び出すと、pratic_formに新規追加された回答を取得し、インスタンスのフィールドに保存するメソッド。
+        呼び出すと、pratic_formに新規追加された回答を取得し、インスタンスのフィールドself.new_answersに保存するメソッド。
         取得された回答数を返す。
         """
 
         new_answer_nums = 0
-        # print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")  # デバッグ用
         try:
             response = self.FORM_SERVICE.forms().responses().list(
                 formId=self.IDS['partic_form'],
@@ -138,8 +148,6 @@ class  IO:
                 self.partic_form_meta_info["all_answers_num"] += new_answer_nums
         except Exception as e:
             print(f"Error in \"IO.call_new_answers()\": {e}")
-        
-        # print(f"before → all: {self.partic_form_meta_info["all_answers_num"]}, new: {self.partic_form_meta_info["new_answers_num"]}")  # デバッグ用
 
         return new_answer_nums
 
@@ -170,6 +178,10 @@ class  IO:
         self.new_answersの回答をdatasheetsに追加する。
         """
 
+        self.writing_keeper("set")
+        self.add_column_if_needed('datasheets', 'net_info', self.ADDITIONAL_COLUMN)
+        self.writing_keeper("check")
+
         for counter, a_new_answer in enumerate(self.new_answers, start=0):  # 未処理の回答を一つずつ処理する。
             # 現在の最終列を確認するために、1行目(ヘッダー行)だけを取得
             try:  
@@ -194,6 +206,7 @@ class  IO:
                 'values' : [new_column_data]
             }
 
+            # 末尾の列に追加する。
             try:
                 self.SHEET_SERVICE.spreadsheets().values().update(
                     spreadsheetId=self.IDS['datasheets'], # 対象のスプレッドシートID
@@ -201,6 +214,8 @@ class  IO:
                     valueInputOption="USER_ENTERED",      # 自動フォーマット（日付や数値の認識）
                     body=body
                 ).execute()
+                self.writing_keeper("check")
+
             except Exception as e:
                 print(f"Error while adding a column to the datasheets in \"IO.update_datasheets()\": {e}")
 
@@ -215,11 +230,13 @@ class  IO:
                         insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
                         body={'values' : [a_body[a_sheet]]}
                     ).execute()
+                    self.writing_keeper("check")
+
 
                 except Exception as e:
                     print(f"Error while adding a row to the datasheets in \"IO.update_datasheets()\": {e}")
 
-            
+
     def update_form(self):
         """
         participants_formの知り合いの質問を更新するメソッド
@@ -271,16 +288,16 @@ class  IO:
                         img = url_base + sheet_raw_answer_values[register_num-1][2].split("=")[1]
 
                 if 'image' in an_option:  # 画像情報を削除してエラーを回避（画像URL問題を避けるため）
-                    an_option['image'] = {"sourceUri": img}
+                    an_option['image'] = {'sourceUri': img}
 
             # 新しい投稿を反映
             for counter, an_answer in enumerate(self.new_answers):
                 # 回答情報を取得
-                name = f"{self.partic_form_meta_info["all_answers_num"]+counter}_{an_answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
-                prof_img_id = an_answer.get('answers', {}).get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
+                name = f"{self.partic_form_meta_info['all_answers_num']+counter}_{an_answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+                prof_img_id = an_answer.get('answers', {}).get(self.ANSWERS['prof_image'], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
 
                 # 採用する画像を選ぶ
-                if name == "0_No friends / なし":
+                if name == self.NO_FRIENDS_NAME:
                     img = no_friends_img
                 elif prof_img_id == None:  # 画像が選択されていない場合
                     img = no_image_url
@@ -326,8 +343,112 @@ class  IO:
             print(f"Error in \"IO.update_form()\": {e}")
 
 
+    def set_datasheets(self):
+        """
+        datasheetsを更新するメソッド
+        self.new_answersの回答からdatasheetsを構築する。
+        """
+
+        self.writing_keeper("set")
+        self.add_column_if_needed('datasheets', 'net_info', self.ADDITIONAL_COLUMN)
+        self.writing_keeper("check")
+
+        # 本処理
+        num = 1 if self.partic_form_meta_info['all_answers_num'] - 1 <= 0 else 0  # 回答が0件のときと1件以上のときで、新しい回答をdatasheetsに追加する際の回答番号の振る舞いを変えなければいけないから。これがないと、番号がズレる。
+        line_counter = 2
+        for counter, a_new_answer in enumerate(self.new_answers, start=num):  # 未処理の回答を一つずつ処理する。
+            # 各シートに順番に、最新の1行を書き込む。
+            a_body = self.make_body(a_new_answer, counter)
+            for a_sheet in list(self.SHEET_NAMES.keys()):
+                try:
+                    self.SHEET_SERVICE.spreadsheets().values().append(
+                        spreadsheetId=self.IDS['datasheets'],
+                        range=f"{self.SHEET_NAMES[a_sheet]}!A1",  # シート名を指定し、末尾に追加
+                        valueInputOption='USER_ENTERED',  # スプレッドシート上で入力したのと同じ挙動（日付などが自動変換される）
+                        insertDataOption='INSERT_ROWS',  # 必要に応じて新しい行を作成して挿入
+                        body={'values' : [a_body[a_sheet]]}
+                    ).execute()
+                    self.writing_keeper("check")
+
+                except Exception as e:
+                    print(f"Error while adding a row to the datasheets in \"IO.update_datasheets()\": {e}")
+
+            # ヘッダを書き込む。
+            try:  # 現在の最終列を確認するために、1行目(ヘッダー行)だけを取得
+                response = self.SHEET_SERVICE.spreadsheets().values().get(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=f"{self.SHEET_NAMES['net']}!1:1"  # 1行目全体
+                ).execute()
+
+            except Exception as e:
+                print(f"Error while making a column for the datasheets in \"IO.update_datasheets()\": {e}")
+            
+            next_col_num = self.partic_form_meta_info["all_answers_num"] + counter + 2  # データがある列数 + 1 が書き込み開始位置
+            start_col_letter = self.col_num_to_letter(next_col_num)  # 列番号をアルファベットに変換
+            target_range = f"{self.SHEET_NAMES['net']}!{start_col_letter}1"  # 書き込む範囲を指定
+
+            new_column_data = [f"{self.partic_form_meta_info['all_answers_num']+counter}_{a_new_answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"]  # ヘッダ（第1行）に名前を追加            
+            body = {
+                'majorDimension': 'COLUMNS',
+                'values' : [new_column_data]
+            }
+            try:
+                self.SHEET_SERVICE.spreadsheets().values().update(
+                    spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                    range=target_range,
+                    valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                    body=body
+                ).execute()
+                self.writing_keeper("check")
+
+            except Exception as e:
+                print(f"Error while adding a column to the datasheets in \"IO.update_datasheets()\": {e}")
+
+            # 空欄に0を挿入していく。
+            try:
+                # 行ごとに足りない部分を0で埋めたリストを作る。
+                response = self.SHEET_SERVICE.spreadsheets().values().get(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=f"{self.SHEET_NAMES['net']}!{line_counter}:{line_counter}"  # line_counter行目全体を取得
+                ).execute()
+                a_row = response.get('values', [])[0]  # 二重リストなので、内側のリストを取り出す。
+                for i in range(self.partic_form_meta_info["all_answers_num"] + self.partic_form_meta_info["new_answers_num"] - len(a_row) + 2):
+                    a_row.append(0)
+
+                # 作成したリストをnet_infoに反映する。
+                target_cell = f"{self.SHEET_NAMES['net']}!A{line_counter}"  # 書き込む場所を指定
+                self.SHEET_SERVICE.spreadsheets().values().update(
+                    spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                    range=target_cell,
+                    valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                    body={'values' : [a_row]}
+                ).execute()
+                self.writing_keeper("check")
+
+                # 処理する行を次に進める
+                line_counter += 1
+            except Exception as e:
+                print(f"Error while filling up the datasheets in \"IO.update_datasheets()\": {e}")
+                
+
     def recreate_databese(self):
-        pass
+        """
+        datasheetsとparticipants_formのネットワーク情報の選択肢を、既存のものを破壊した後にparticipants_formから作り直すメソッド
+        """
+
+        # datasheetsの内容と、 participants_formのネットワーク情報の選択肢を「0_No friends / なし」以外すべて消去する。
+
+        # datasheetsとparticipants_formの最初のフォーマットを整える。
+
+
+        self.set_all_answers_as_new()
+        self.set_datasheets()
+        self.update_form
+
+        # 処理した新しい回答のキューを削除
+        self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
+        self.new_answers.clear()
+        self.partic_form_meta_info['new_answers_num'] = 0
 
 
     def recreate_datasheets(self):
@@ -335,11 +456,55 @@ class  IO:
         datasheetsを、既存のものを破壊した後にparticipants_formから作り直すメソッド
         """
 
+        # datasheetsの内容をすべて消去する。
+        for a_sheet in list(self.SHEET_NAMES.keys()):
+            try:
+                self.SHEET_SERVICE.spreadsheets().values().clear(
+                    spreadsheetId=self.IDS['datasheets'],
+                    range=self.SHEET_NAMES[a_sheet]
+                ).execute()
+            except Exception as e:
+                print(f"Error while deleting datasheets in \"recreate_datasheets()\": {e}")
+
+        # partic_infoの最初のフォーマットを整える。
+
+
+        # net_infoの最初のフォーマットを整える。
+        try:
+            self.SHEET_SERVICE.spreadsheets().values().update(
+                spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                range=f"{self.SHEET_NAMES['net']}!A1",  # 1行1列成分から書き込む。
+                valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                body={'values' : [["-", self.NO_FRIENDS_NAME]]}
+            ).execute()
+        except Exception as e:
+            print(f"Error while writing first format to the datasheets in \"IO.recreate_datasheets()\": {e}")
+
+        # 書き込む。
+        self.set_all_answers_as_new()
+        self.set_datasheets()
+
+        # 処理した新しい回答のキューを削除
+        self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
+        self.new_answers.clear()
+        self.partic_form_meta_info['new_answers_num'] = 0
+
     
     def recreate_form(self):
         """
-        participants_formの知り合いの質問を、既存のものを破壊した後にraw_answersから作り直すメソッド
+        participants_formのネットワーク情報の選択肢を、既存のものを破壊した後にraw_answersから作り直すメソッド
         """
+
+        # participants_formのネットワーク情報の選択肢を「0_No friends / なし」以外すべて消去する。
+        # 最初のフォーマットを整える。
+
+        self.set_all_answers_as_new()
+        self.update_form()
+
+        # 処理した新しい回答のキューを削除
+        self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
+        self.new_answers.clear()
+        self.partic_form_meta_info['new_answers_num'] = 0
 
     
     def call_datasheets(self, name: str, range: str):
@@ -357,7 +522,7 @@ class  IO:
 
     def convert_timedata(self, input_str: str, method: str):
         """
-        日時データの形式を変換する関数
+        日時データの形式を変換するヘルパー関数
             method
                 ・StoF: スプレッドシートの日時データ形式の文字列を、フォームの日時データ形式の文字列に変換
                 ・FtoS: 文字列フォームの日時データ形式の文字列を、スプレッドシートの日時データ形式に変換
@@ -399,9 +564,9 @@ class  IO:
         """
 
         time = answer.get('lastSubmittedTime')
-        name = f"{self.partic_form_meta_info["all_answers_num"]+counter}_{answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
-        prof_img_id = answer.get('answers', {}).get(self.ANSWERS["prof_image"], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
-        friends = [x.get('value') for x in answer.get('answers', {}).get(self.ANSWERS["friends"], {}).get('textAnswers', {}).get('answers', [])]
+        name = f"{self.partic_form_meta_info['all_answers_num']+counter}_{answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+        prof_img_id = answer.get('answers', {}).get(self.ANSWERS['prof_image'], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
+        friends = [x.get('value') for x in answer.get('answers', {}).get(self.ANSWERS['friends'], {}).get('textAnswers', {}).get('answers', [])]
 
         # partic_info用のデータを作成
         partic_line = [
@@ -446,10 +611,153 @@ class  IO:
 
     def col_num_to_letter(self, num):
         """
-        列番号(1始まり)をA1記法の列文字(A, B, ..., Z, AA, AB...)に変換するヘルパー関数
+        整数numをExcel風のアルファベット列名に変換する関数
+        例: 1->A, 26->Z, 27->AA, 52->AZ, 53->BA ...
         """
-        string = ""
+        if num <= 0:
+            raise ValueError("1以上の整数を指定してください")
+
+        result = ""
         while num > 0:
-            num, remainder = divmod(num - 1, 26)
-            string = chr(65 + remainder) + string
-        return string
+            num -= 1  # 1始まり(1-26)を0始まり(0-25)に補正して計算しやすくする
+            remainder = num % 26
+            result = chr(65 + remainder) + result  # chr(65) は 'A' 。remainder(0~25) を足して文字に変換。先頭に追加していくことで桁上がりを表現。
+            num //= 26  # 次の桁へ
+
+        return result
+
+
+    def set_all_answers_as_new(self):
+        """
+        participants_formから、すべての回答を読み取り、self.new_answersに格納するヘルパー関数
+        self.partic_form_meta_infoも更新する。
+        もし現在の未処理の回答がある場合、関数の処理の一番最初にそれらを放棄する。
+        """
+
+        # 現在の未処理の回答を放棄する
+        if self.new_answers:
+            self.new_answers.clear()
+
+        # すべての回答を取得し、self.new_answersに保存する。
+        try:
+            response = self.FORM_SERVICE.forms().responses().list(
+                formId=self.IDS['partic_form'],
+                ).execute()
+            tmp = response.get('responses', [])
+
+        except Exception as e:
+            print(f"Error while getting all answers in \"IO.set_all_answers_as_new()\": {e}")
+
+        self.new_answers = sorted(tmp, key=lambda x: x.get('lastSubmittedTime'))  # 投稿日時でソート
+
+        # self.partic_form_meta_infoの回答数を更新
+        new_answer_nums = len(self.new_answers)
+        if new_answer_nums > 0:  # 新しい回答がない場合には、self.new_answersは空リストになっている。
+            self.partic_form_meta_info["all_answers_num"] = 0 
+            self.partic_form_meta_info["new_answers_num"] = new_answer_nums
+        else:
+            new_answer_nums = 0
+
+        # self.partic_form_meta_infoのタイムスタンプを更新
+        new_timestamps = [x.get('lastSubmittedTime') for x in self.new_answers]
+        if new_timestamps:  # new_answers が空でない場合のみ更新
+            self.partic_form_meta_info['last_timestamp'] = max(new_timestamps)
+        else:  # new_answers が空である場合には、raw_answersの作成日時をタイムスタンプにする。
+            try:
+                sheet_raw_answer_metadata = self.DRIVE_SERVICE.files().get(
+                        fileId=self.IDS['raw_answers'],
+                        fields='createdTime'
+                        ).execute()  # raw_answerの作成日時情報を得る。
+                self.partic_form_meta_info['last_timestamp'] = sheet_raw_answer_metadata.get('createdTime')
+            except Exception as e:
+                print(f"Error while setting timestamp in \"IO.set_all_answers_as_new()\": {e}")
+            
+        return new_answer_nums
+
+
+    def add_column_if_needed(self, sheet_id, sheet_name, num):
+        """
+        sheet_nameで指定されるスプレッドシートの列数が足りなくなったら、引数で指定された数だけ列を増やすヘルパー関数
+        """
+
+        threshold = 10  # 現在の列数とこれからの列数の差が何以下なら列を追加するかの閾値
+
+        # スプレッドシートの現在の列数を取得
+        current_num = 0
+        try:
+            # スプレッドシート全体のメタデータを取得（データの中身は取得しないので軽量）
+            spreadsheet_meta = self.SHEET_SERVICE.spreadsheets().get(
+                spreadsheetId=self.IDS[sheet_id],
+                includeGridData=False  # データ自体は不要
+            ).execute()
+
+            for sheet in spreadsheet_meta.get('sheets', []):  # 指定されたシート名を探す
+                props = sheet.get('properties', {})
+                if props.get('title') == sheet_name:
+                    current_num = props.get('gridProperties', {}).get('columnCount', 26)  # 新規作成直後などで未定義の場合はデフォルトの26(A-Z)を返す安全策
+
+        except Exception as e:
+            print(f"Error in \"IO.add_column_if_needed()\": {e}")
+        
+        # これから追加される列の数を算出
+        future_num = self.partic_form_meta_info["all_answers_num"] + self.partic_form_meta_info["new_answers_num"] + 2
+
+        # 追加の必要性の有無を判定し、必要なら追加する。
+        if future_num - current_num <= threshold:
+            try:
+                body = {
+                    "requests": [
+                        {
+                            "appendDimension": {
+                                "sheetId": self.get_sheet_id(sheet_name=sheet_name),
+                                "dimension": "COLUMNS", # 列を増やす
+                                "length": num        # 増やす数
+                            }
+                        }
+                    ]
+                }
+                
+                self.SHEET_SERVICE.spreadsheets().batchUpdate(
+                    spreadsheetId=self.IDS[sheet_id],
+                    body=body
+                ).execute()
+            except Exception as e:
+                print(f"Error in \"IO.add_column_if_needed()\": {e}")
+
+
+    def writing_keeper(self, order: str):
+        """
+        スプレッドシートへの書き込みがAPIの制限ないに収まる用に管理するヘルパー関数
+        使い方
+            orderが "set" なら、タイマーを起動
+            orderが "check" なら、条件を逸脱していないか確認する。
+        """
+
+        if order == "set":
+            self.timer = time.time()
+        elif order == "check":
+            self.write_count += 1
+            if self.write_count > self.COUNT_THRESHOLD:
+                diff = time.time() - self.timer
+                if diff < self.LIMIT:  # 数え始めから60秒以内なら、書き込みを停止する。
+                    time.sleep(self.LIMIT - diff + 1)  # バッファ用に1秒おまけで待つ。
+                    self.timer = time.time()  # タイマーをリセット
+                    self.write_count = 0  # 書き込み回数
+
+
+    def get_sheet_id(self, sheet_name):
+        """
+        シート名(例: "net_info")から、そのシート固有の整数ID(SheetId)を取得するヘルパー関数
+        """
+        try:
+            spreadsheet = self.SHEET_SERVICE.spreadsheets().get(
+                spreadsheetId=self.IDS['datasheets']
+            ).execute()
+            
+            for sheet in spreadsheet.get('sheets', []):
+                if sheet['properties']['title'] == sheet_name:
+                    return sheet['properties']['sheetId']  # これが整数のID
+            return None
+        except Exception as e:
+            print(f"Error getting sheet ID: {e}")
+            return None
