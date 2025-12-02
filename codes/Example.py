@@ -6,17 +6,20 @@ O_noderの実行ファイル
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.1.0'
-__date__ = '2025.12.1'
+__version__ = '0.2.0'
+__date__ = '2025.12.2'
 
 import sys
+import time
 import os.path
 import datetime
-import time
+import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+
 from IO import IO
+from Drawer import Drawer
 
 
 # ドライブ上のファイルの識別ID
@@ -53,6 +56,9 @@ ANSWERS = {
     'friends' : "1cfca697"
 }
 
+NETWORK_DATA_FILE_PATH = "./../src/network_data.json"  # ネットワーク情報を保存するローカルファイルのpath
+
+
 SCOPES = [
     'https://www.googleapis.com/auth/drive.file',  # このアプリで使用する Google ドライブ上の特定のファイルのみの参照、編集、作成、削除
     'https://www.googleapis.com/auth/drive.metadata.readonly',  # このアプリが作成したわけではないGoogle ドライブ上の特定のファイルの参照
@@ -68,25 +74,33 @@ CREDENTIALS_FILE = 'credentials.json'
 
 def main():
     # 初期化
+    print("initializing data...", end="", flush=True)
     init()
+    an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS, NETWORK_DATA_FILE_PATH)
+    print(" → Done.")
 
-    an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS)
+    # グラフの初期描画
+    print("preparing graph...", end="", flush=True)
+    if not os.path.exists(NETWORK_DATA_FILE_PATH):  # 該当ファイルが存在しない場合
+        print(f"No such file '{NETWORK_DATA_FILE_PATH}'. → Recreating the file.", end="", flush=True)
+        an_io.recreat_local_file()  # ファイルを作る。
+        print(" → Done.")
+    with open(NETWORK_DATA_FILE_PATH, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    a_drawer = Drawer(data, "tmp")
+    print(" → Done.")
+    a_drawer.perfom()
+    print()
 
-    # an_io.recreate_datasheets()
-    # an_io.recreate_form()
-
+    # participants_formの更新を待ち、更新されるとデータベースとグラフ描画を更新する。
     while True:
-        print(datetime.datetime.now())
+        print("\r" + f"{datetime.datetime.now()}", end="")
 
         if an_io.call_new_answers() > 0:
             an_io.update_databese()  # 新規の回答に合わせてデータベース（ネット上のスプレッドシートとフォーム）上のデータを更新
-
-            # an_io.call_datasheets()  # 新規の回答に合わせてローカルの情報を更新
-
-
         
-        print()
-        time.sleep(1)
+        time.sleep(1)  # クラウド上のデータをGoogleのサーバーが処理する際のラグを吸収しつつ、ループの一巡をゆっくりにしてコンピューティングの負荷を下げる。
+
 
 
 

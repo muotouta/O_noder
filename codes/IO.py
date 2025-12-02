@@ -6,17 +6,18 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.1.2'
-__date__ = '2025.12.1'
+__version__ = '0.2.0'
+__date__ = '2025.12.2'
 
 
 import sys
 import time
+import json
 from datetime import datetime, timedelta, timezone
 import googleapiclient.discovery
 
 
-class  IO:
+class IO:
     """
     入出力を司るクラス
     """
@@ -30,6 +31,8 @@ class  IO:
     DRIVE_SERVICE: googleapiclient.discovery 
     FORM_SERVICE: googleapiclient.discovery
     SHEET_SERVICE: googleapiclient.discovery
+
+    NETWORK_DATA_FILE_PATH: str
 
     partic_form_meta_info = {
         "all_answers_num": 0,
@@ -48,7 +51,7 @@ class  IO:
     LIMIT = 60  # 連続書き込み回数の上限を考える時間の長さ
     
 
-    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS):
+    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS, NETWORK_DATA_FILE_PATH):
         """
         コンストラクタ
         """
@@ -59,6 +62,7 @@ class  IO:
         self.SHEET_NAMES = SHEET_NAMES
         self.QUESTIONS = QUESTIONS
         self.ANSWERS = ANSWERS
+        self.NETWORK_DATA_FILE_PATH = NETWORK_DATA_FILE_PATH
 
         # APIサービスを構築
         self.DRIVE_SERVICE = googleapiclient.discovery.build('drive', 'v3', credentials=CREDS)  # Google Drive APIサービスの構築
@@ -121,6 +125,9 @@ class  IO:
         except Exception as e:
             print(f"Error in \"IO.init()\": {e}")
 
+        # データベースを初期化
+        self.recreate_databese()
+
 
     def call_new_answers(self):
         """
@@ -158,6 +165,7 @@ class  IO:
         双方の更新後、new_answersにある回答をフラッシュする。
         """
         
+        # クラウド上のデータを更新
         self.update_datasheets()
         self.update_form()
 
@@ -170,6 +178,8 @@ class  IO:
         # 処理した新しい回答のキューを削除
         self.new_answers.clear()
         self.partic_form_meta_info['new_answers_num'] = 0
+
+        # ローカルファイルの更新
 
 
     def update_datasheets(self):
@@ -457,6 +467,25 @@ class  IO:
         except Exception as e:
             print(f"Error while writing first format to the datasheets in \"IO.recreate_databese()\": {e}")
 
+        # partic_info用の最初のフォーマットを整える。
+        try:
+            response = self.SHEET_SERVICE.spreadsheets().values().get(
+                spreadsheetId=self.IDS['raw_answers'],
+                range=f"{self.RAW_SHEET}!1:1"
+            ).execute()
+            questions = response['values'][0]
+
+            questions[0], questions[1] = questions[1], questions[0]  # 先頭2つの質問の順序が、partic_infoとraw_answersで異なるので、整える。
+            self.SHEET_SERVICE.spreadsheets().values().update(
+                spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                range=f"{self.SHEET_NAMES['partic']}!A1",  # 1行1列成分から書き込む。
+                valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                body={'values' : [questions]}
+            ).execute()
+
+        except Exception as e:
+            print(f"Error while writing first format to the partic_info in \"IO.recreate_datasheets()\": {e}")
+
         target_title = 'Participants List / 参加者リスト'
         retain_option = "0_No friends / なし"
         url_base = "https://drive.google.com/uc?export=view&id="
@@ -521,7 +550,7 @@ class  IO:
         except Exception as e:
             print(f"Error while resting \"participants_form\" in \"IO.recreate_form()\":{e}")
 
-
+        # クラウド上のデータを更新
         self.set_all_answers_as_new()
         self.set_datasheets()
         self.update_form()
@@ -530,6 +559,9 @@ class  IO:
         self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
         self.new_answers.clear()
         self.partic_form_meta_info['new_answers_num'] = 0
+
+        # ローカルファイルを更新
+        self.recreat_local_file()
 
 
     def recreate_datasheets(self):
@@ -556,7 +588,26 @@ class  IO:
                 body={'values' : [["-", self.NO_FRIENDS_NAME]]}
             ).execute()
         except Exception as e:
-            print(f"Error while writing first format to the datasheets in \"IO.recreate_datasheets()\": {e}")
+            print(f"Error while writing first format to the net_info in \"IO.recreate_datasheets()\": {e}")
+
+        # partic_info用の最初のフォーマットを整える。
+        try:
+            response = self.SHEET_SERVICE.spreadsheets().values().get(
+                spreadsheetId=self.IDS['raw_answers'],
+                range=f"{self.RAW_SHEET}!1:1"
+            ).execute()
+            questions = response['values'][0]
+
+            questions[0], questions[1] = questions[1], questions[0]  # 先頭2つの質問の順序が、partic_infoとraw_answersで異なるので、整える。
+            self.SHEET_SERVICE.spreadsheets().values().update(
+                spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
+                range=f"{self.SHEET_NAMES['partic']}!A1",  # 1行1列成分から書き込む。
+                valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
+                body={'values' : [questions]}
+            ).execute()
+
+        except Exception as e:
+            print(f"Error while writing first format to the partic_info in \"IO.recreate_datasheets()\": {e}")
 
         # 書き込む。
         self.set_all_answers_as_new()
@@ -647,17 +698,75 @@ class  IO:
         self.partic_form_meta_info['new_answers_num'] = 0
 
     
-    def call_datasheets(self, name: str, range: str):
+    def recreat_local_file(self):
         """
         datasheetsのデータをローカルに落とすメソッド
-        name: どのシートか
-            ・partic_info
-            ・net_info
-            ・form_src
         range: 取得するデータの範囲
             ・all: シート全体
-            ・line: 最後の行
+            ・diff: 差分のみ
         """
+
+        img_dir = "./../src/prof_imgs/"
+
+        edge_value = 1  # データフォーマット的に必要な値。本アプリケーションでは使用しないので、適当に決めた。
+
+        # データの取得
+        try:
+            # datasheetsの情報を取得
+            ans_num = self.partic_form_meta_info["all_answers_num"]
+            tmp = int(ans_num if ans_num > 0 else 1) + 2  # net_infoの第1、2列の分を回答数にオフセットしてシート全体の列数を取得
+            col_letter = self.col_num_to_letter(tmp)
+
+            # net_infoが表す隣接行列を取得
+            response = self.SHEET_SERVICE.spreadsheets().values().get(
+                spreadsheetId=self.IDS['datasheets'],
+                range=f"{self.SHEET_NAMES['net']}!A2:{col_letter}{ans_num+1}"
+            ).execute()
+            net_mat = response['values']
+
+            # 質問数を取得
+            response = self.SHEET_SERVICE.spreadsheets().values().get(
+                spreadsheetId=self.IDS['raw_answers'],
+                range=f"{self.RAW_SHEET}!1:1"
+            ).execute()
+            questions_num = len(response['values'][0])
+
+            # partic_infoの情報を取得
+            col_letter = self.col_num_to_letter(questions_num+2)  # partic_infoの第1列は名前、第2列はタイムスタンプなので、その分オフセットを施す。
+            response = self.SHEET_SERVICE.spreadsheets().values().get(
+                spreadsheetId=self.IDS['datasheets'],
+                range=f"{self.SHEET_NAMES['partic']}!A2:{col_letter}{ans_num+1}"  # 一列目はヘッダなので、その分オフセットを施す。
+            ).execute()
+            partic_list = response['values']
+
+        except Exception as e:
+            print(f"Error while getting data in \"IO.save_to_local()\": {e}")
+        
+        # ファイルへの書き出し
+        node_lst = []
+        edge_lst = []
+        for i in range(ans_num):
+            node_a_line = {"name": partic_list[i][0], "img_id": partic_list[i][2]}  # 名前とプロフィール画像idを取得
+
+            # edge_a_line = []
+            j = 2  # net_mat[i]の第1要素は名前、第2要素は「0_No friends / なし」との接続なので、除外する。
+            while j < len(net_mat[i]):
+                if net_mat[i][j] == '1':
+                    # edge_a_line = {"source": i, "target": j-2, "value": edge_value}
+                    edge_lst.append({"source": i, "target": j-2, "value": edge_value})
+
+                j += 1
+
+            node_lst.append(node_a_line)
+            # if edge_a_line:
+            #     edge_lst.append(edge_a_line)
+
+        d = {
+            "nodes": node_lst,
+            "links": edge_lst
+        }
+        with open(self.NETWORK_DATA_FILE_PATH, 'w') as f:
+            json.dump(d, f, indent=2)
 
 
     def convert_timedata(self, input_str: str, method: str):
@@ -755,7 +864,7 @@ class  IO:
         例: 1->A, 26->Z, 27->AA, 52->AZ, 53->BA ...
         """
         if num <= 0:
-            raise ValueError("1以上の整数を指定してください")
+            raise ValueError("argument must be integer and 1 or higher.")
 
         result = ""
         while num > 0:
