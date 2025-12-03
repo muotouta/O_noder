@@ -17,6 +17,7 @@ import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from flask import Flask, render_template, jsonify
 
 from IO import IO
 from Drawer import Drawer
@@ -56,7 +57,7 @@ ANSWERS = {
     'friends' : "1cfca697"
 }
 
-NETWORK_DATA_FILE_PATH = "./../src/network_data.json"  # ネットワーク情報を保存するローカルファイルのpath
+NETWORK_DATA_FILE_PATH = "./../src/network_data/network_data.json"  # ネットワーク情報を保存するローカルファイルのpath
 
 
 SCOPES = [
@@ -70,6 +71,10 @@ SCOPES = [
 CREDS: None
 TOKEN_FILE = 'token.json'
 CREDENTIALS_FILE = 'credentials.json'
+
+app = Flask(__name__)
+
+drawer: Drawer
 
 
 def main():
@@ -87,10 +92,12 @@ def main():
         print(" → Done.")
     with open(NETWORK_DATA_FILE_PATH, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    a_drawer = Drawer(data, "tmp")
+    global drawer
+    drawer = Drawer(data, "tmp")
     print(" → Done.")
-    a_drawer.perfom()
     print()
+
+    app.run(host='0.0.0.0', port=5001, debug=True)
 
     # participants_formの更新を待ち、更新されるとデータベースとグラフ描画を更新する。
     while True:
@@ -100,9 +107,6 @@ def main():
             an_io.update_databese()  # 新規の回答に合わせてデータベース（ネット上のスプレッドシートとフォーム）上のデータを更新
         
         time.sleep(1)  # クラウド上のデータをGoogleのサーバーが処理する際のラグを吸収しつつ、ループの一巡をゆっくりにしてコンピューティングの負荷を下げる。
-
-
-
 
     return 0
 
@@ -135,6 +139,16 @@ def init():
         # 次回以降のためにトークンを保存
         with open(TOKEN_FILE, 'w') as token:
             token.write(CREDS.to_json())
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/data')
+def data():
+    return jsonify(drawer.const_view_data())
 
 
 if __name__ == '__main__':

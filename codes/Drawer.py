@@ -6,12 +6,14 @@ O_noderにおける、グラフ描画用のコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.1.0'
-__date__ = '2025.12.2'
+__version__ = '0.2.0'
+__date__ = '2025.12.3'
 
 
+import os
+import json
+import random
 import igraph as ig
-import plotly.graph_objs as go
 
 
 class Drawer:
@@ -23,6 +25,7 @@ class Drawer:
     LAYOUT_ALGORITHM = "kk"
 
     # データ
+    data: dict
     node_data: dict
     edge_data: dict
     img_data: dict
@@ -33,7 +36,7 @@ class Drawer:
     group: list
 
     # グラフの情報
-    G: ig
+    lyout: ig
     node_pos = {
         'Xn': list,
         'Yn': list,
@@ -44,7 +47,6 @@ class Drawer:
         'Ye': list,
         'Ze': list
     }
-    fig: go
 
 
     def __init__(self, graph_data, img_data):
@@ -53,8 +55,9 @@ class Drawer:
         """
 
         # グラフのデータを獲得
-        self.node_data = graph_data['nodes']
-        self.edge_data = graph_data['links']
+        self.data = graph_data
+        # self.node_data = graph_data['nodes']
+        # self.edge_data = graph_data['links']
         self.img_data = img_data
         self.N = len(graph_data['nodes'])
         self.L = len(graph_data['links'])
@@ -66,131 +69,71 @@ class Drawer:
             self.group.append(0)
 
         # グラフオブジェクトの生成
-        self.G = ig.Graph(self.edges, directed=False)
+        self.laout = ig.Graph(self.edges, directed=False).layout(self.LAYOUT_ALGORITHM, dim=3)
 
         # 描画に向けた設定
-        self.calc_layout()  # グラフのレイアウトを計算
-        self.initialize_graph()  # グラフの描画設定
+        self.set_coord()  # グラフの要素の座標を計算
+        self.const_view_data()  # グラフの描画設定
 
     
-    def calc_layout(self):
+    def set_coord(self):
         """
-        ノードの座標を計算し、フィールドに保存する関数
+        グラフの要素（ノードとエッジ）の座標を計算し、フィールドに保存する関数
         """
-
-        layt = self.G.layout(self.LAYOUT_ALGORITHM, dim=3)
 
         # ノードの座標リスト作成
-        self.node_pos['Xn'] = [layt[k][0] for k in range(self.N)]
-        self.node_pos['Yn'] = [layt[k][1] for k in range(self.N)]
-        self.node_pos['Zn'] = [layt[k][2] for k in range(self.N)]
+        self.node_pos['Xn'] = [self.laout[k][0] for k in range(self.N)]
+        self.node_pos['Yn'] = [self.laout[k][1] for k in range(self.N)]
+        self.node_pos['Zn'] = [self.laout[k][2] for k in range(self.N)]
 
         # エッジの座標リスト作成
         self.edge_pos['Xe'] = []
         self.edge_pos['Ye'] = []
         self.edge_pos['Ze'] = []
         for e in self.edges:
-            self.edge_pos['Xe'] += [layt[e[0]][0], layt[e[1]][0], None]
-            self.edge_pos['Ye'] += [layt[e[0]][1], layt[e[1]][1], None]
-            self.edge_pos['Ze'] += [layt[e[0]][2], layt[e[1]][2], None]
+            self.edge_pos['Xe'] += [self.laout[e[0]][0], self.laout[e[1]][0], None]
+            self.edge_pos['Ye'] += [self.laout[e[0]][1], self.laout[e[1]][1], None]
+            self.edge_pos['Ze'] += [self.laout[e[0]][2], self.laout[e[1]][2], None]
 
 
-    def initialize_graph(self):
+    def const_view_data(self):
         """
-        グラフ描画のための設定を行いフィールドに保存する関数
+        グラフ描画のためのデータ構築を行い、構築したデータを返す関数
         """
 
-        # エッジ（線）の描画設定
-        trace1 = go.Scatter3d(
-            x=self.edge_pos['Xe'], y=self.edge_pos['Ye'], z=self.edge_pos['Ze'],
-            mode='lines',
-            line=dict(color='rgb(125,125,125)', width=1),
-            hoverinfo='none'
-        )
+        n_count = len(self.data['nodes'])
+        coords = self.laout.coords
+        scale = 100 
 
-        # ホバーテキスト（ツールチップ）の作成（ノードの直接隣接ノードの名前をホバー時に表示するために、隣接ノードの情報を作成する。）
-        hover_texts = []
-        for i in range(self.N):
-            my_name = self.labels[i]  # 自分自身の名前
-            neighbor_indices = self.G.neighbors(i)  # 隣人のインデックスを取得 (igraphの機能)
-            neighbor_names = [self.labels[n] for n in neighbor_indices]  # 隣人の名前リストに変換
+        nodes = []
+        for i, node_info in enumerate(self.data['nodes']):
+            # img_id を使って画像ファイル名を指定
+            # 例: "1EZy....jpg"
+            img_filename = f"img1.jpg"
             
-            # 表示用テキストを作成 (<br>は改行)。例: "Valjean<br>Neighbors: Cosette, Marius"
-            if neighbor_names:
-                neighbors_str = ", ".join(neighbor_names)
-                text = f"<b>{my_name}</b><br>{neighbors_str}"
-            else:
-                text = f"<b>{my_name}</b>"
-            
-            hover_texts.append(text)
+            nodes.append({
+                "id": node_info.get('name', f"Node_{i}"), # 名前をIDとして使用
+                "img": img_filename,
+                "fx": coords[i][0] * scale,
+                "fy": coords[i][1] * scale,
+                "fz": coords[i][2] * scale
+            })
 
-        # ノード（点）の描画設定
-        trace2 = go.Scatter3d(
-            x=self.node_pos['Xn'], y=self.node_pos['Yn'], z=self.node_pos['Zn'],
-            mode='markers',
-            name='participants',
-            marker=dict(
-                symbol='circle',
-                size=6,
-                color=self.group,
-                colorscale='Viridis',
-                line=dict(color='rgb(50,50,50)', width=0.5)
-            ),
-            text=hover_texts,
-            hoverinfo='text'
-        )
+            # ブラウザ側(3d-force-graph)には、インデックスではなく「ID(名前)」で
+            # つながりを教える必要があります。
+            links = []
+            for link in self.data['links']:
+                src_idx = link.get('source')
+                tgt_idx = link.get('target')
+                
+                if 0 <= src_idx < n_count and 0 <= tgt_idx < n_count:
+                    links.append({
+                        "source": self.data['nodes'][src_idx]['name'],
+                        "target": self.data['nodes'][tgt_idx]['name']
+                    })
 
-        # 軸の設定
-        axis = dict(
-            showbackground=False,
-            showline=False,
-            zeroline=False,
-            showgrid=False,
-            showticklabels=False,
-            showspikes=False,  # 3D空間上の位置を把握しやすくするための補助線をホバー時に表示する機能をオフ
-            title=''
-        )
-
-        # 全体のレイアウト設定
-        layout = go.Layout(
-            title="",
-            # width=1000,  # グラフが表示される領域の幅。これらを指定しないと、ブラウザのウィンドウサイズに合わせて自動調整される。
-            # height=1000,  # グラフが表示される領域の高さ。これらを指定しないと、ブラウザのウィンドウサイズに合わせて自動調整される。
-            showlegend=False,
-            scene=dict(
-                xaxis=dict(axis),
-                yaxis=dict(axis),
-                zaxis=dict(axis),
-            ),
-            # margin=dict(t=100),
-            hovermode='closest',
-            annotations=[
-                # dict(
-                #     showarrow=False,
-                #     # text="Data source: [1] miserables.json (Local File)",
-                #     xref='paper',
-                #     yref='paper',
-                #     x=0,
-                #     y=0.1,
-                #     xanchor='left',
-                #     yanchor='bottom',
-                #     font=dict(size=14)
-                # )
-            ]
-        )
-
-        data_traces = [trace1, trace2]
-        self.fig = go.Figure(data=data_traces, layout=layout)
-
-
-    def perfom(self):
-        """
-        描画を行う関数
-        """
-
-        # グラフ表示
-        self.fig.show()
-
+        return {"nodes": nodes, "links": links}
+    
 
     def add_elements(self, add_data: list):
         """
