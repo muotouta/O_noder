@@ -6,12 +6,15 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.2.0'
-__date__ = '2025.12.2'
+__version__ = '0.3.0'
+__date__ = '2025.12.4'
 
 
 import sys
 import time
+import os
+import glob
+import requests
 import json
 from datetime import datetime, timedelta, timezone
 import googleapiclient.discovery
@@ -32,17 +35,18 @@ class IO:
     FORM_SERVICE: googleapiclient.discovery
     SHEET_SERVICE: googleapiclient.discovery
 
-    NETWORK_DATA_FILE_PATH: str
+    FILE_PATHS: dict
+    FILE_NAMES: dict
 
+    ADDITIONAL_COLUMN = 30  # スプレッドシートの列を増やすときに、一度に増やす列の数
+
+    # 回答データ用変数
     partic_form_meta_info = {
         "all_answers_num": 0,
         "new_answers_num": 0,
         "last_timestamp": None  # フォームの形式
     }
     new_answers: list  # 取得した未処理の回答を保存するリスト。キューとして利用。
-
-    NO_FRIENDS_NAME = "0_No friends / なし"  # participants_formのネットワーク情報の質問の初期選択肢
-    ADDITIONAL_COLUMN = 30  # スプレッドシートの列を増やすときに、一度に増やす列の数
 
     # APIの制限で1分間に60回までしか書き込みリクエストができず、それを超えるとエラーになるので、リクエストのレートに制限をかけるための、書き込み状況を監視する変数
     timer = time.time()
@@ -51,7 +55,7 @@ class IO:
     LIMIT = 60  # 連続書き込み回数の上限を考える時間の長さ
     
 
-    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS, NETWORK_DATA_FILE_PATH):
+    def __init__(self, IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS, FILE_PATHS, FILE_NAMES):
         """
         コンストラクタ
         """
@@ -62,7 +66,8 @@ class IO:
         self.SHEET_NAMES = SHEET_NAMES
         self.QUESTIONS = QUESTIONS
         self.ANSWERS = ANSWERS
-        self.NETWORK_DATA_FILE_PATH = NETWORK_DATA_FILE_PATH
+        self.FILE_PATHS = FILE_PATHS
+        self.FILE_NAMES = FILE_NAMES
 
         # APIサービスを構築
         self.DRIVE_SERVICE = googleapiclient.discovery.build('drive', 'v3', credentials=CREDS)  # Google Drive APIサービスの構築
@@ -162,12 +167,15 @@ class IO:
     def update_databese(self):
         """
         datasheetsとparticipants_formを更新するメソッド
-        双方の更新後、new_answersにある回答をフラッシュする。
+        更新後、new_answersにある回答をフラッシュする。
         """
         
         # クラウド上のデータを更新
         self.update_datasheets()
         self.update_form()
+
+        # ローカルファイルの更新1
+        self.get_img_to_local()
 
         # 参加者フォームのメタ情報を更新
         if self.new_answers:
@@ -179,7 +187,8 @@ class IO:
         self.new_answers.clear()
         self.partic_form_meta_info['new_answers_num'] = 0
 
-        # ローカルファイルの更新
+        # ローカルファイルの更新2
+        self.recreat_local_file()
 
 
     def update_datasheets(self):
@@ -300,6 +309,10 @@ class IO:
                 if 'image' in an_option:  # 画像情報を削除してエラーを回避（画像URL問題を避けるため）
                     an_option['image'] = {'sourceUri': img}
 
+        except Exception as e:
+            print(f"Error while making \"participants_form\" with old answers in \"IO.update_form()\": {e}")
+
+        try:
             # 新しい投稿を反映
             for counter, an_answer in enumerate(self.new_answers):
                 # 回答情報を取得
@@ -307,7 +320,7 @@ class IO:
                 prof_img_id = an_answer.get('answers', {}).get(self.ANSWERS['prof_image'], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
 
                 # 採用する画像を選ぶ
-                if name == self.NO_FRIENDS_NAME:
+                if name == self.FILE_NAMES['no_friends_img']:
                     img = no_friends_img
                 elif prof_img_id == None:  # 画像が選択されていない場合
                     img = no_image_url
@@ -350,7 +363,7 @@ class IO:
             self.FORM_SERVICE.forms().batchUpdate(formId=self.IDS['partic_form'], body=update_body).execute()
 
         except Exception as e:
-            print(f"Error in \"IO.update_form()\": {e}")
+            print(f"Error while making \"participants_form\" with new answers in \"IO.update_form()\": {e}")
 
 
     def set_datasheets(self):
@@ -446,6 +459,7 @@ class IO:
         datasheetsとparticipants_formのネットワーク情報の選択肢を、既存のものを破壊した後にparticipants_formから作り直すメソッド
         """
 
+
         # datasheetsの内容をすべて消去する。
         for a_sheet in list(self.SHEET_NAMES.keys()):
             try:
@@ -462,7 +476,7 @@ class IO:
                 spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
                 range=f"{self.SHEET_NAMES['net']}!A1",  # 1行1列成分から書き込む。
                 valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
-                body={'values' : [["-", self.NO_FRIENDS_NAME]]}
+                body={'values' : [["-", self.FILE_NAMES['no_friends_img']]]}
             ).execute()
         except Exception as e:
             print(f"Error while writing first format to the datasheets in \"IO.recreate_databese()\": {e}")
@@ -550,17 +564,28 @@ class IO:
         except Exception as e:
             print(f"Error while resting \"participants_form\" in \"IO.recreate_form()\":{e}")
 
+        # ローカルのプロフィール画像を更新
+        target_dir = self.FILE_PATHS['prof']
+        target_imgs = glob.glob(os.path.join(target_dir, '*'))
+        for each in target_imgs:
+            img_name = each.split("/")[-1]  # ファイル名を取り出す。
+            if not img_name == self.FILE_NAMES['no_image_img']:  # self.FILE_NAMES['no_image_img']以外の画像を削除
+                os.remove(each)
+
         # クラウド上のデータを更新
         self.set_all_answers_as_new()
         self.set_datasheets()
         self.update_form()
+
+        # ローカルファイルの更新1
+        self.get_img_to_local()
 
         # 処理した新しい回答のキューを削除
         self.partic_form_meta_info['all_answers_num'] = len(self.new_answers)
         self.new_answers.clear()
         self.partic_form_meta_info['new_answers_num'] = 0
 
-        # ローカルファイルを更新
+        # ローカルファイルを更新2
         self.recreat_local_file()
 
 
@@ -585,7 +610,7 @@ class IO:
                 spreadsheetId=self.IDS['datasheets'],  # 対象のスプレッドシートID
                 range=f"{self.SHEET_NAMES['net']}!A1",  # 1行1列成分から書き込む。
                 valueInputOption="USER_ENTERED",  # 自動フォーマット（日付や数値の認識）
-                body={'values' : [["-", self.NO_FRIENDS_NAME]]}
+                body={'values' : [["-", self.FILE_NAMES['no_friends_img']]]}
             ).execute()
         except Exception as e:
             print(f"Error while writing first format to the net_info in \"IO.recreate_datasheets()\": {e}")
@@ -746,27 +771,58 @@ class IO:
         node_lst = []
         edge_lst = []
         for i in range(ans_num):
-            node_a_line = {"name": partic_list[i][0], "img_id": partic_list[i][2]}  # 名前とプロフィール画像idを取得
+            if len(partic_list[i]) > 3:  # プロフィール画像を選択していない投稿は、partic_list[i]が短くなる。
+                node_a_line = {"name": partic_list[i][0], "img_id": partic_list[i][2]}  # 名前とプロフィール画像idを取得
+            else:
+                node_a_line = {"name": partic_list[i][0], "img_id": "null"}  # 名前とプロフィール画像idを取得
 
-            # edge_a_line = []
             j = 2  # net_mat[i]の第1要素は名前、第2要素は「0_No friends / なし」との接続なので、除外する。
             while j < len(net_mat[i]):
                 if net_mat[i][j] == '1':
-                    # edge_a_line = {"source": i, "target": j-2, "value": edge_value}
                     edge_lst.append({"source": i, "target": j-2, "value": edge_value})
 
                 j += 1
 
             node_lst.append(node_a_line)
-            # if edge_a_line:
-            #     edge_lst.append(edge_a_line)
 
         d = {
             "nodes": node_lst,
             "links": edge_lst
         }
-        with open(self.NETWORK_DATA_FILE_PATH, 'w') as f:
+        with open(self.FILE_PATHS['net'], 'w') as f:
             json.dump(d, f, indent=2)
+
+
+    def get_img_to_local(self):
+        """
+        プロフィール画像をダウンロードしてローカルに保存する関数
+        """
+
+        base_uri = "https://drive.google.com/uc?export=view&id="
+
+        try:
+            offset = 1 if self.partic_form_meta_info['all_answers_num'] - 1 <= 0 else 0  # 回答が0件のときと1件以上のときで、新しい回答をdatasheetsに追加する際の回答番号の振る舞いを変えなければいけないから。これがないと、番号がズレる。
+            for i, ans in enumerate(self.new_answers):
+                name = ans['answers'][self.ANSWERS['name']]['textAnswers']['answers'][0]['value']
+                if self.ANSWERS['prof_image'] in ans['answers']:
+                    img_id = ans['answers'][self.ANSWERS['prof_image']]['fileUploadAnswers']['answers'][0]['fileId']
+                    file_format = ans['answers'][self.ANSWERS['prof_image']]['fileUploadAnswers']['answers'][0]['mimeType'].split("/")[1]
+
+                    if "/" in name:  # 入力された名前に / が入っているとpathの設定がうまくいかなくなるので、 | に置き換える。
+                        name = name.replace('/', '|')
+                    if "\\" in name:  # \ についても同様。
+                        name = name.replace('\\', '|')
+
+                    ans_number = self.partic_form_meta_info["all_answers_num"] + i + offset
+                    img_uri = base_uri + img_id
+                    img_name = f"{ans_number}_{name}.{file_format}"
+                    img_path = self.FILE_PATHS['prof'] + img_name
+
+                    res = requests.get(img_uri)
+                    with open(img_path, 'wb') as f:
+                        f.write(res.content)
+        except Exception as e:
+            print(f"Error in \"IO.get_img_to_local()\": {e}")
 
 
     def convert_timedata(self, input_str: str, method: str):
@@ -816,6 +872,11 @@ class IO:
         name = f"{self.partic_form_meta_info['all_answers_num']+counter}_{answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
         prof_img_id = answer.get('answers', {}).get(self.ANSWERS['prof_image'], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
         friends = [x.get('value') for x in answer.get('answers', {}).get(self.ANSWERS['friends'], {}).get('textAnswers', {}).get('answers', [])]
+
+        if "/" in name:  # 入力された名前に / が入っているとpathの設定がうまくいかなくなるので、 | に置き換える。
+            name = name.replace('/', '|')
+        if "\\" in name:  # \ についても同様。
+            name = name.replace('\\', '|')
 
         # partic_info用のデータを作成
         partic_line = [
@@ -943,16 +1004,20 @@ class IO:
             for sheet in spreadsheet_meta.get('sheets', []):  # 指定されたシート名を探す
                 props = sheet.get('properties', {})
                 if props.get('title') == sheet_name:
-                    current_num = props.get('gridProperties', {}).get('columnCount', 26)  # 新規作成直後などで未定義の場合はデフォルトの26(A-Z)を返す安全策
+                    column_num = props['gridProperties']['columnCount']
+
+            if column_num == 0:  # 新規作成直後などで未定義の場合はデフォルトの26(A-Z)を返す安全策
+                column_num = 26
 
         except Exception as e:
             print(f"Error in \"IO.add_column_if_needed()\": {e}")
         
         # これから追加される列の数を算出
-        future_num = self.partic_form_meta_info["all_answers_num"] + self.partic_form_meta_info["new_answers_num"] + 2
+        answers_num = self.partic_form_meta_info["all_answers_num"] + self.partic_form_meta_info["new_answers_num"] + 2
 
         # 追加の必要性の有無を判定し、必要なら追加する。
-        if future_num - current_num <= threshold:
+        if 0 <= answers_num - column_num or abs(answers_num - column_num) <= threshold:
+            # print("column added")
             try:
                 body = {
                     "requests": [

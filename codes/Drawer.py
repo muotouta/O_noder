@@ -6,13 +6,12 @@ O_noderにおける、グラフ描画用のコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.2.0'
-__date__ = '2025.12.3'
+__version__ = '0.3.0'
+__date__ = '2025.12.4'
 
 
 import os
-import json
-import random
+import glob
 import igraph as ig
 
 
@@ -28,7 +27,8 @@ class Drawer:
     data: dict
     node_data: dict
     edge_data: dict
-    img_data: dict
+    FILE_PATHS: str
+    FILE_NAMES: dict
     edges: list
     N: int
     L: int
@@ -49,16 +49,15 @@ class Drawer:
     }
 
 
-    def __init__(self, graph_data, img_data):
+    def __init__(self, graph_data, FILE_PATHS, FILE_NAMES):
         """
         コンストラクタ
         """
 
         # グラフのデータを獲得
         self.data = graph_data
-        # self.node_data = graph_data['nodes']
-        # self.edge_data = graph_data['links']
-        self.img_data = img_data
+        self.FILE_PATHS = FILE_PATHS
+        self.FILE_NAMES = FILE_NAMES
         self.N = len(graph_data['nodes'])
         self.L = len(graph_data['links'])
         self.edges = [(graph_data['links'][k]['source'], graph_data['links'][k]['target']) for k in range(self.L)]
@@ -107,10 +106,12 @@ class Drawer:
 
         nodes = []
         for i, node_info in enumerate(self.data['nodes']):
-            # img_id を使って画像ファイル名を指定
-            # 例: "1EZy....jpg"
-            img_filename = f"img1.jpg"
-            
+            tmp = glob.glob(os.path.join(self.FILE_PATHS['prof'], f"{node_info['name']}.*"))
+            if tmp:  # プロフィール画像が存在する場合
+                img_filename = tmp[0].split("/")[-1]  # 画像ファイル名を指定
+            else:
+                img_filename = self.FILE_NAMES['no_image_img']
+
             nodes.append({
                 "id": node_info.get('name', f"Node_{i}"), # 名前をIDとして使用
                 "img": img_filename,
@@ -119,8 +120,7 @@ class Drawer:
                 "fz": coords[i][2] * scale
             })
 
-            # ブラウザ側(3d-force-graph)には、インデックスではなく「ID(名前)」で
-            # つながりを教える必要があります。
+            # ブラウザ側(3d-force-graph)には、インデックスではなく「ID(名前)」でつながりを教えなければならない。
             links = []
             for link in self.data['links']:
                 src_idx = link.get('source')
@@ -133,9 +133,3 @@ class Drawer:
                     })
 
         return {"nodes": nodes, "links": links}
-    
-
-    def add_elements(self, add_data: list):
-        """
-        要素の追加を行う関数
-        """

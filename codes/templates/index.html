@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin: 0; }
+    /* ツールチップ（ホバー時の文字）を黒にする設定 */
+    .scene-tooltip {
+      color: black !important;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 5px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+  </style>
+  
+  <script src="//unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="//unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+</head>
+<body>
+  <div id="3d-graph"></div>
+
+  <script>
+    // パラメータ
+    const hold_time = 3000;  // ホールド解除後の一時停止時刻
+    const refresh_time = 5000;  //何秒ごとにデータ更新を行うか
+
+    // 1. グラフの初期化
+    const Graph = ForceGraph3D()
+      (document.getElementById('3d-graph'))
+      .nodeLabel('id') 
+      .backgroundColor('white')
+      .showNavInfo(false)
+      .enableNodeDrag(false)
+      .linkColor(() => '#000000')   
+      .linkOpacity(0.65)  // 透明度。1が不透明。
+      .linkWidth(0.3)
+
+      .nodeThreeObject(node => {  // ノードのオブジェクトの種類や形状などを設定する。
+        if (!node.img) return null;
+
+        // 空のテクスチャとスプライトを作っておく
+        const texture = new THREE.Texture();
+        const material = new THREE.SpriteMaterial({ map: texture });
+        const sprite = new THREE.Sprite(material);
+
+        sprite.scale.set(30, 30, 1);
+
+        const img = new Image();
+        img.src = `/static/images/${node.img}`;
+        img.crossOrigin = "Anonymous";  // エラー回避のおまじない
+
+        // 画像が読み込み終わったら実行される処理
+        img.onload = () => {
+            // maxで大きい方、minで小さい方に合わせる。
+            const size = Math.min(img.width, img.height);
+
+            // 一時的なキャンバス（画用紙）を作成
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // 円を描いて、そこだけ描画されるように「切り抜き設定」をする。
+            ctx.beginPath();
+            ctx.arc(size/2, size/2, size/2, 0, 2 * Math.PI);
+            ctx.clip();
+
+            // 画像をキャンバスの中心に描画
+            const x = (size - img.width) / 2;
+            const y = (size - img.height) / 2;
+            ctx.drawImage(img, x, y);
+
+            // 完成したキャンバスをテクスチャとして適用
+            texture.image = canvas;
+            texture.colorSpace = THREE.SRGBColorSpace; 
+            texture.needsUpdate = true; 
+        };
+
+        return sprite;
+      });
+
+    // 2. 「確実な」自動回転の実装（遅延再開 ＋ 自動ズーム機能）
+    const controls = Graph.controls();
+    controls.autoRotate = false; 
+
+    let isUserInteracting = false;
+    let lastInteractionTime = 0; 
+
+    controls.addEventListener('start', () => { 
+      isUserInteracting = true; 
+    });
+
+    controls.addEventListener('end', () => { 
+      isUserInteracting = false;
+      lastInteractionTime = Date.now();  // 操作終了時の時刻を記録
+    });
+
+    setInterval(() => {
+      // A. 操作中は回さない
+      if (isUserInteracting) return;
+
+      // B. 操作終了からhold_time秒（ms）経過していないなら回さない
+      // Date.now() は現在のミリ秒を取得します
+      if (Date.now() - lastInteractionTime < hold_time) return;
+
+      // --- 以下、回転 ＋ ズーム処理 ---
+      const { x, z, y } = Graph.cameraPosition();  // 現在のカメラ位置を取得
+      
+      // 1. 角度の計算（回転）
+      const currentAngle = Math.atan2(z, x);
+      const newAngle = currentAngle + 0.0007; // 回転速度
+
+      // 2. 距離の計算（ズーム）
+      // Math.sin(時間) を使うことで、滑らかに行ったり来たりさせます
+      // 220 : 基準となる距離（グラフのサイズに合わせて調整してください）
+      // 50  : 揺れ幅（220 ± 50 の範囲で動きます）
+      // 2000: ズームの周期スピード（数字が大きいほどゆっくり）
+      const newDist = 220 + 50 * Math.sin(Date.now() / 30000);
+
+      // 新しい位置を適用（これで強制的に画面が更新）
+      Graph.cameraPosition({
+        x: newDist * Math.cos(newAngle),
+        z: newDist * Math.sin(newAngle),
+        y: y // 高さはそのまま（あるいは y も動かすと面白い動きになります）
+      });
+    }, 30);
+
+    // 3. 定期的なデータ更新処理
+    function updateData() {
+      fetch('/data')
+        .then(res => res.json())
+        .then(data => {
+          Graph.graphData(data);
+        })
+        .catch(err => console.error(err));
+    }
+
+    updateData();
+    setInterval(updateData, refresh_time); 
+
+  </script>
+</body>
+</html>

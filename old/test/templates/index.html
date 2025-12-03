@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style> body { margin: 0; } </style>
+  
+  <script src="//unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="//unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+</head>
+<body>
+  <div id="3d-graph"></div>
+
+  <script>
+    // 1. グラフの初期化
+    const Graph = ForceGraph3D()
+      (document.getElementById('3d-graph'))
+      .nodeLabel('id') 
+      .backgroundColor('white')
+      .showNavInfo(false)
+      .enableNodeDrag(false)
+      .linkColor(() => '#cccccc') 
+      .linkWidth(1)
+
+      .nodeThreeObject(node => {
+        if (!node.img) return null;
+
+        // 画像読み込み
+        const imgTexture = new THREE.TextureLoader().load(`/static/images/${node.img}`);
+        
+        // 【修正1】画像が白っぽくなるのを防ぐため、色空間(sRGB)を明示的に指定します
+        imgTexture.colorSpace = THREE.SRGBColorSpace; 
+
+        const material = new THREE.SpriteMaterial({ map: imgTexture });
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(20, 20, 1); 
+        return sprite;
+      });
+
+    // 2. 「確実な」自動回転の実装
+    // 標準のautoRotateは描画が止まると動かないため、自前で回します。
+    const controls = Graph.controls();
+    controls.autoRotate = false; // 標準機能はオフにします
+
+    let isUserInteracting = false;
+    
+    // ユーザーが操作し始めたら回転を止めるフラグ管理
+    controls.addEventListener('start', () => { isUserInteracting = true; });
+    controls.addEventListener('end',   () => { isUserInteracting = false; });
+
+    // 30ミリ秒ごとにカメラを少しずらすタイマー
+    setInterval(() => {
+      // 操作中なら回さない
+      if (isUserInteracting) return;
+
+      // 現在のカメラ位置を取得
+      const { x, z, y } = Graph.cameraPosition();
+      
+      // 中心からの距離(r)と角度(angle)を計算
+      const r = Math.sqrt(x * x + z * z);
+      const angle = Math.atan2(z, x);
+
+      // 角度を少し増やす（0.003を変えると速さが変わります）
+      const newAngle = angle + 0.003;
+
+      // 新しい位置をセット（これで強制的に画面が更新されます）
+      Graph.cameraPosition({
+        x: r * Math.cos(newAngle),
+        z: r * Math.sin(newAngle),
+        y: y // 高さは維持
+      });
+    }, 30);
+
+    // 3. 定期的なデータ更新処理
+    function updateData() {
+      fetch('/data')
+        .then(res => res.json())
+        .then(data => {
+          Graph.graphData(data);
+        })
+        .catch(err => console.error(err));
+    }
+
+    updateData();
+    setInterval(updateData, 5000); 
+
+  </script>
+</body>
+</html>

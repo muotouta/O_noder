@@ -1,0 +1,38 @@
+{
+    'responseId': 'ACYDBNhXpROLtBrYeAxgoPe9jLVD1LgB8J70nCCcrKn5VbNX6vlRGsM24H8b12nOJHFYTzc', 
+    'createTime': '2025-12-01T15:19:52.992Z', 'lastSubmittedTime': '2025-12-01T15:19:52.992624Z', 
+    'answers': {
+        '1cfca697': {
+            'questionId': '1cfca697', 
+            'textAnswers': {
+                'answers': [{
+                    'value': '0_No friends / なし'
+                }]
+            }
+        }, 
+        '130c5a9c': {
+            'questionId': '130c5a9c', 
+            'textAnswers': {
+                'answers': [{
+                    'value': '下り坂'
+                }]
+            }}, 
+            '2737d529': {
+                'questionId': '2737d529', 
+                'fileUploadAnswers': {
+                    'answers': [{
+                        'fileId': '1EZy07A7Poq0C3nDgobLFcAhbjVSPfHAj', 
+                        'fileName': 'DSCF0156 - muotouta.JPG', 
+                        'mimeType': 'image/jpeg'
+                    }]
+                }
+            }, '7157132c': {
+                'questionId': '7157132c', 
+                'textAnswers': {
+                    'answers': [{
+                        'value': '武藤太央'
+                    }]
+                }
+            }
+        }
+    }
