@@ -51,9 +51,11 @@
   <script>
     // パラメータ
     const hold_time = 7000;  // ホールド解除後の一時停止時刻
-    const refresh_time = 50000;  //何秒ごとにデータ更新を行うか
+    const refresh_time = 3000;  //何秒ごとにデータ更新を行うか
 
     // 1. グラフの初期化
+    const textureCache = {};
+
     const Graph = ForceGraph3D()
       (document.getElementById('3d-graph'))
       .nodeLabel('id') 
@@ -66,59 +68,65 @@
       .linkWidth(0.3)
 
       .nodeThreeObject(node => {
-        // 画像と文字をまとめる「グループ（透明な箱）」を作成
         const group = new THREE.Group();
 
-        // --- A. 画像の作成（これまでのコードとほぼ同じ）---
+        // --- 画像処理（キャッシュ対応版） ---
         if (node.img) {
+          // 先に「枠」だけ作っておく
           const texture = new THREE.Texture();
           const material = new THREE.SpriteMaterial({ map: texture });
           const imgSprite = new THREE.Sprite(material);
+          imgSprite.scale.set(30, 30, 1);
 
-          imgSprite.scale.set(30, 30, 1); // 画像の大きさ
+          // ★ キャッシュ確認ロジック
+          if (textureCache[node.img]) {
+            // A. キャッシュにある場合：それを瞬時に適用（待ち時間ゼロ！）
+            // ※ .clone() しないと、他のノードとメモリを共有してバグる可能性があるため複製します
+            imgSprite.material.map = textureCache[node.img].clone();
+            imgSprite.material.colorSpace = THREE.SRGBColorSpace; // 色空間の補正
 
-          const img = new Image();
-          img.src = `/static/images/${node.img}`;
-          img.crossOrigin = "Anonymous";
-          
-          img.onload = () => {
+          } else {
+            // B. キャッシュにない場合：新しく読み込む（初回のみ）
+            const img = new Image();
+            img.src = `/static/images/${node.img}`;
+            img.crossOrigin = "Anonymous";
+
+            img.onload = () => {
+              // 画像加工（円形切り抜き）
               const size = Math.min(img.width, img.height);
               const canvas = document.createElement('canvas');
               canvas.width = size;
               canvas.height = size;
               const ctx = canvas.getContext('2d');
-
               ctx.beginPath();
               ctx.arc(size/2, size/2, size/2, 0, 2 * Math.PI);
               ctx.clip();
-
               const x = (size - img.width) / 2;
               const y = (size - img.height) / 2;
               ctx.drawImage(img, x, y);
 
+              // テクスチャに適用
               texture.image = canvas;
-              texture.colorSpace = THREE.SRGBColorSpace; 
-              texture.needsUpdate = true; 
-          };
-          
-          // グループに画像を追加
+              texture.colorSpace = THREE.SRGBColorSpace;
+              texture.needsUpdate = true;
+
+              // ★ ここで完成したテクスチャをキャッシュに保存！
+              textureCache[node.img] = texture;
+            };
+          }
+
           group.add(imgSprite);
         }
 
-        // --- B. 文字ラベルの作成（新規追加）---
-        // ノードID（名前）を使ってテキストスプライトを作成
+        // --- 文字ラベルの作成 ---
         const label = new SpriteText(node.id);
-        
-        label.color = 'black';     // 黒文字
-        label.textHeight = 3;      // 文字の大きさ（画像の高さが30なので、バランスを見て調整してください）
-        label.position.set(0, -18, 0); // 配置場所：画像の中心(0,0)から下に20ずらす
-        
-        // グループに文字を追加
+        label.color = 'black';
+        label.textHeight = 4;
+        label.position.set(0, -20, 0);
         group.add(label);
 
-        // 画像と文字が入ったグループを返す
         return group;
-      });
+      })
 
     // 2. 「確実な」自動回転の実装（遅延再開 ＋ 自動ズーム機能）
     const controls = Graph.controls();
@@ -146,7 +154,7 @@
     const rotateSpeed = 0.0007; 
     const verticalSpeed = 0.0005;
     const zoomSpeed = 0.0001; // 大きな距離を行き来するので、速度はゆっくりにします(0.04だと速すぎて酔います)
-    const backSpeed = 0.01;  // カメラが振動の範囲外に行った時の復帰のスピード
+    const backSpeed = 0.05;  // カメラが振動の範囲外に行った時の復帰のスピード
 
     // 状態管理変数
     let zoomPhase = 0;      // 波の進行度
