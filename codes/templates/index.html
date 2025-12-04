@@ -58,6 +58,7 @@
       (document.getElementById('3d-graph'))
       .nodeLabel('id') 
       .backgroundColor('white')
+      .nodeLabel('tooltip')
       .showNavInfo(false)
       .enableNodeDrag(false)
       .linkColor(() => '#000000')   
@@ -144,7 +145,7 @@
     // 回転・振動のスピード
     const rotateSpeed = 0.0007; 
     const verticalSpeed = 0.0005;
-    const zoomSpeed = 0.0401; // 大きな距離を行き来するので、速度はゆっくりにします(0.04だと速すぎて酔います)
+    const zoomSpeed = 0.0001; // 大きな距離を行き来するので、速度はゆっくりにします(0.04だと速すぎて酔います)
     const backSpeed = 0.01;  // カメラが振動の範囲外に行った時の復帰のスピード
 
     // 状態管理変数
@@ -240,6 +241,38 @@
       fetch('/data')
         .then(res => res.json())
         .then(data => {
+
+          // 1. 誰と誰が繋がっているかリストを作成（初期化）
+          const connections = {};
+          data.nodes.forEach(node => {
+            connections[node.id] = [];
+          });
+
+          // 2. リンク情報を走査してリストを埋める
+          data.links.forEach(link => {
+            // link.source と link.target には相手の名前(ID)が入っています
+            if (connections[link.source]) connections[link.source].push(link.target);
+            if (connections[link.target]) connections[link.target].push(link.source);
+          });
+
+          // 3. 表示用のHTML文字列を作成してノードにセット
+          data.nodes.forEach(node => {
+            const neighbors = connections[node.id]; // 繋がっている人のリスト
+            const count = neighbors.length;         // 人数
+            const neighborNames = neighbors.join('<br>'); // 名前をカンマ区切りにする
+
+            // ツールチップの中身（HTML）
+            node.tooltip = `
+              <div style="text-align: center;">
+                <strong style="font-size: 0.9em;">${node.id}</strong><br>
+                <span style="font-size: 0.7em;">Connections: ${count}</span><br>
+                <div style="font-size: 0.6em; opacity: 0.8; max-width: 200px; margin: 0 auto; word-wrap: break-word;">
+                  ${neighborNames}
+                </div>
+              </div>
+            `;
+          });
+
           Graph.graphData(data);
           if (data.nodes.length === 0) return;
 
