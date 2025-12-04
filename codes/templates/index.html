@@ -11,18 +11,47 @@
       border-radius: 4px;
       border: 1px solid #ccc;
     }
+
+    #info-panel {
+      position: absolute;
+      bottom: 28px;
+      right: 35px;
+      z-index: 100; /* グラフより手前に表示 */
+      color: #333;
+      background-color: rgba(255, 255, 255, 0.8); /* 背景を少し透過 */
+      padding: 20px 30px;
+      border-radius: 8px;
+      font-family: sans-serif;
+      font-size: 17px;
+      pointer-events: none; /* マウス操作を邪魔しないようにする */
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    
+    #info-panel span {
+      font-weight: bold;
+      margin-left: 5px;
+    }
+
+    #info-panel div:not(:last-child) {
+      margin-bottom: 12px; 
+    }
   </style>
   
   <script src="//unpkg.com/three@0.160.0/build/three.min.js"></script>
   <script src="//unpkg.com/3d-force-graph@1.73.3/dist/3d-force-graph.min.js"></script>
+  <script src="//unpkg.com/three-spritetext"></script>
 </head>
 <body>
   <div id="3d-graph"></div>
-
+  <div id="info-panel">
+    <div>Nodes: <span id="node-count">0</span></div>
+    <div>Edges: <span id="edge-count">0</span></div>
+  </div>
+  
   <script>
     // パラメータ
-    const hold_time = 3000;  // ホールド解除後の一時停止時刻
-    const refresh_time = 5000;  //何秒ごとにデータ更新を行うか
+    const hold_time = 7000;  // ホールド解除後の一時停止時刻
+    const refresh_time = 50000;  //何秒ごとにデータ更新を行うか
 
     // 1. グラフの初期化
     const Graph = ForceGraph3D()
@@ -35,48 +64,59 @@
       .linkOpacity(0.65)  // 透明度。1が不透明。
       .linkWidth(0.3)
 
-      .nodeThreeObject(node => {  // ノードのオブジェクトの種類や形状などを設定する。
-        if (!node.img) return null;
+      .nodeThreeObject(node => {
+        // 画像と文字をまとめる「グループ（透明な箱）」を作成
+        const group = new THREE.Group();
 
-        // 空のテクスチャとスプライトを作っておく
-        const texture = new THREE.Texture();
-        const material = new THREE.SpriteMaterial({ map: texture });
-        const sprite = new THREE.Sprite(material);
+        // --- A. 画像の作成（これまでのコードとほぼ同じ）---
+        if (node.img) {
+          const texture = new THREE.Texture();
+          const material = new THREE.SpriteMaterial({ map: texture });
+          const imgSprite = new THREE.Sprite(material);
 
-        sprite.scale.set(30, 30, 1);
+          imgSprite.scale.set(30, 30, 1); // 画像の大きさ
 
-        const img = new Image();
-        img.src = `/static/images/${node.img}`;
-        img.crossOrigin = "Anonymous";  // エラー回避のおまじない
+          const img = new Image();
+          img.src = `/static/images/${node.img}`;
+          img.crossOrigin = "Anonymous";
+          
+          img.onload = () => {
+              const size = Math.min(img.width, img.height);
+              const canvas = document.createElement('canvas');
+              canvas.width = size;
+              canvas.height = size;
+              const ctx = canvas.getContext('2d');
 
-        // 画像が読み込み終わったら実行される処理
-        img.onload = () => {
-            // maxで大きい方、minで小さい方に合わせる。
-            const size = Math.min(img.width, img.height);
+              ctx.beginPath();
+              ctx.arc(size/2, size/2, size/2, 0, 2 * Math.PI);
+              ctx.clip();
 
-            // 一時的なキャンバス（画用紙）を作成
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
+              const x = (size - img.width) / 2;
+              const y = (size - img.height) / 2;
+              ctx.drawImage(img, x, y);
 
-            // 円を描いて、そこだけ描画されるように「切り抜き設定」をする。
-            ctx.beginPath();
-            ctx.arc(size/2, size/2, size/2, 0, 2 * Math.PI);
-            ctx.clip();
+              texture.image = canvas;
+              texture.colorSpace = THREE.SRGBColorSpace; 
+              texture.needsUpdate = true; 
+          };
+          
+          // グループに画像を追加
+          group.add(imgSprite);
+        }
 
-            // 画像をキャンバスの中心に描画
-            const x = (size - img.width) / 2;
-            const y = (size - img.height) / 2;
-            ctx.drawImage(img, x, y);
+        // --- B. 文字ラベルの作成（新規追加）---
+        // ノードID（名前）を使ってテキストスプライトを作成
+        const label = new SpriteText(node.id);
+        
+        label.color = 'black';     // 黒文字
+        label.textHeight = 3;      // 文字の大きさ（画像の高さが30なので、バランスを見て調整してください）
+        label.position.set(0, -18, 0); // 配置場所：画像の中心(0,0)から下に20ずらす
+        
+        // グループに文字を追加
+        group.add(label);
 
-            // 完成したキャンバスをテクスチャとして適用
-            texture.image = canvas;
-            texture.colorSpace = THREE.SRGBColorSpace; 
-            texture.needsUpdate = true; 
-        };
-
-        return sprite;
+        // 画像と文字が入ったグループを返す
+        return group;
       });
 
     // 2. 「確実な」自動回転の実装（遅延再開 ＋ 自動ズーム機能）
@@ -94,35 +134,105 @@
       isUserInteracting = false;
       lastInteractionTime = Date.now();  // 操作終了時の時刻を記録
     });
+    
+    // --- パラメータ設定 ---
+    // --- パラメータ設定 ---
+    let limit_min = 50;   // 下限（固定）
+    let limit_max = 800;  // 上限（updateDataで自動更新される）
+    const zoomMargin = 2.0  // 上限を、グラフ全体が収まる範囲からどれくらい離れたところに設定するか。
+
+    // 回転・振動のスピード
+    const rotateSpeed = 0.0007; 
+    const verticalSpeed = 0.0005;
+    const zoomSpeed = 0.0401; // 大きな距離を行き来するので、速度はゆっくりにします(0.04だと速すぎて酔います)
+    const backSpeed = 0.01;  // カメラが振動の範囲外に行った時の復帰のスピード
+
+    // 状態管理変数
+    let zoomPhase = 0;      // 波の進行度
+    let verticalPhase = 0;  // 縦回転の角度
+    let isOscillating = false; // 「現在、波に乗って振動中か？」のフラグ
 
     setInterval(() => {
-      // A. 操作中は回さない
-      if (isUserInteracting) return;
-
-      // B. 操作終了からhold_time秒（ms）経過していないなら回さない
-      // Date.now() は現在のミリ秒を取得します
-      if (Date.now() - lastInteractionTime < hold_time) return;
-
-      // --- 以下、回転 ＋ ズーム処理 ---
-      const { x, z, y } = Graph.cameraPosition();  // 現在のカメラ位置を取得
+      // ------------------------------------------------
+      // 1. 現在の物理的なカメラ位置を取得
+      // ------------------------------------------------
+      const { x, y, z } = Graph.cameraPosition();
+      const currentDist3D = Math.sqrt(x * x + y * y + z * z); // 現在の3次元距離
       
-      // 1. 角度の計算（回転）
-      const currentAngle = Math.atan2(z, x);
-      const newAngle = currentAngle + 0.0007; // 回転速度
+      // 縦角度の管理（常に現在の位置から計算して維持・更新）
+      if (!isOscillating || isUserInteracting) {
+         // 波に乗っていない時は、現在の位置から逆算して同期合わせをする
+         verticalPhase = Math.asin(y / currentDist3D) || 0;
+      }
 
-      // 2. 距離の計算（ズーム）
-      // Math.sin(時間) を使うことで、滑らかに行ったり来たりさせます
-      // 220 : 基準となる距離（グラフのサイズに合わせて調整してください）
-      // 50  : 揺れ幅（220 ± 50 の範囲で動きます）
-      // 2000: ズームの周期スピード（数字が大きいほどゆっくり）
-      const newDist = 220 + 50 * Math.sin(Date.now() / 30000);
+      // ------------------------------------------------
+      // 2. ユーザー操作中、または待機時間
+      // ------------------------------------------------
+      if (isUserInteracting || Date.now() - lastInteractionTime < hold_time) {
+        isOscillating = false; // 自動振動モードを解除
+        return;
+      }
 
-      // 新しい位置を適用（これで強制的に画面が更新）
-      Graph.cameraPosition({
-        x: newDist * Math.cos(newAngle),
-        z: newDist * Math.sin(newAngle),
-        y: y // 高さはそのまま（あるいは y も動かすと面白い動きになります）
-      });
+      // ------------------------------------------------
+      // 3. 次のフレームの距離(nextDist)を決定する
+      // ------------------------------------------------
+      let nextDist = currentDist3D;
+
+      // 上限・下限を超えているかチェック
+      if (currentDist3D < limit_min - 1.0) { // 誤差許容のため少しバッファ(-1.0)
+        // 下限より近い → 下限に向かって少しずつ離れる（ドリフト）
+        nextDist += (limit_min - nextDist) * backSpeed;
+        isOscillating = false; // まだ範囲外なので振動は開始しない
+
+      } else if (currentDist3D > limit_max + 1.0) {
+        // 上限より遠い → 上限に向かって少しずつ近づく（ドリフト）
+        nextDist += (limit_max - nextDist) * backSpeed;
+        isOscillating = false; 
+
+      } else {
+        // --- 範囲内（安全圏）にいる場合 ---
+        
+        // 振動の中心(mid)と振れ幅(amp)を計算
+        const midpoint = (limit_max + limit_min) / 2;
+        const amplitude = (limit_max - limit_min) / 2;
+
+        if (!isOscillating) {
+          // 「今まさに範囲内に入った」または「ユーザー操作から復帰した」瞬間
+          // 現在の距離が、波のどの位置(位相)にあるかを逆算して同期する
+          
+          // -1 〜 1 の範囲に正規化 (asinの計算エラー回避のためclampする)
+          let ratio = (currentDist3D - midpoint) / amplitude;
+          ratio = Math.max(-1, Math.min(1, ratio));
+          
+          zoomPhase = Math.asin(ratio); // 位相をセット！
+          isOscillating = true; // 振動モードON
+        }
+
+        // 時間を進める
+        zoomPhase += zoomSpeed;
+        verticalPhase += verticalSpeed;
+
+        // 正弦波で新しい距離を決定 (50 〜 limit_max の間を動く)
+        nextDist = midpoint + amplitude * Math.sin(zoomPhase);
+      }
+
+      // ------------------------------------------------
+      // 4. 座標変換と適用
+      // ------------------------------------------------
+      
+      // 回転（横）
+      const currentHorizontalAngle = Math.atan2(z, x);
+      const newHorizontalAngle = currentHorizontalAngle + rotateSpeed;
+
+      // 球面座標系 → XYZ
+      // nextDist を半径として計算
+      const newY = nextDist * Math.sin(verticalPhase);
+      const horizontalRadius = nextDist * Math.cos(verticalPhase);
+      const newX = horizontalRadius * Math.cos(newHorizontalAngle);
+      const newZ = horizontalRadius * Math.sin(newHorizontalAngle);
+
+      Graph.cameraPosition({ x: newX, y: newY, z: newZ });
+
     }, 30);
 
     // 3. 定期的なデータ更新処理
@@ -131,6 +241,34 @@
         .then(res => res.json())
         .then(data => {
           Graph.graphData(data);
+          if (data.nodes.length === 0) return;
+
+          // ノード数、エッジ数の表示を更新
+          document.getElementById('node-count').innerText = data.nodes.length;
+          document.getElementById('edge-count').innerText = data.links.length;
+
+          // 半径計算
+          let maxSqDist = 0;
+          data.nodes.forEach(node => {
+            const x = node.fx || 0;
+            const y = node.fy || 0;
+            const z = node.fz || 0;
+            const d2 = x*x + y*y + z*z;
+            if (d2 > maxSqDist) maxSqDist = d2;
+          });
+          const graphRadius = Math.sqrt(maxSqDist);
+
+          // 全体が見える距離（上限）計算
+          const fov = Graph.camera().fov * (Math.PI / 180);
+          const fitDistance = (graphRadius / Math.sin(fov / 2)) * zoomMargin;
+
+          // 上限・下限の更新
+          limit_max = fitDistance; 
+          limit_min = 50; // 固定
+
+          // ※ deepness は setInterval 内で動的に計算されるため設定不要
+
+          console.log(`Limits updated -> Min: ${limit_min}, Max: ${Math.round(limit_max)}`);
         })
         .catch(err => console.error(err));
     }
