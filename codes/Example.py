@@ -138,7 +138,7 @@ def check_updates_loop():
                     new_data = json.load(f)
                 
                 # 3. Drawerを作り直して、最新のグラフデータをメモリ上に用意する（これにより、次にブラウザが /data にアクセスした時、新しいグラフが返される）。
-                drawer = Drawer(new_data, FILE_PATHS)
+                drawer = Drawer(new_data, FILE_PATHS, FILE_NAMES)
 
         except Exception as e:
             print(f"\n[Error] Background loop error: {e}")

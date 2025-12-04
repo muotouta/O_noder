@@ -206,7 +206,7 @@ class IO:
             try:  
                 response = self.SHEET_SERVICE.spreadsheets().values().get(
                     spreadsheetId=self.IDS['datasheets'],
-                    range=f"{self.SHEET_NAMES["net"]}!1:1"  # 1行目全体
+                    range=f"{self.SHEET_NAMES['net']}!1:1"  # 1行目全体
                 ).execute()
 
             except Exception as e:
@@ -214,11 +214,11 @@ class IO:
             
             next_col_num = self.partic_form_meta_info["all_answers_num"] + counter + 2  # データがある列数 + 1 が書き込み開始位置
             start_col_letter = self.col_num_to_letter(next_col_num)  # 列番号をアルファベットに変換
-            target_range = f"{self.SHEET_NAMES["net"]}!{start_col_letter}1"  # 書き込む範囲を指定
+            target_range = f"{self.SHEET_NAMES['net']}!{start_col_letter}1"  # 書き込む範囲を指定
 
             # 末尾の行までの行列の、末尾の列を0で埋める。
-            new_column_data = [f"{self.partic_form_meta_info["all_answers_num"]+counter}_{a_new_answer.get('answers', {}).get(self.ANSWERS["name"], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"]  # ヘッダ（第1行）に名前を追加
-            for i in range(self.partic_form_meta_info["all_answers_num"] + counter - 1):
+            new_column_data = [f"{self.partic_form_meta_info['all_answers_num']+counter}_{a_new_answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"]  # ヘッダ（第1行）に名前を追加
+            for i in range(self.partic_form_meta_info['all_answers_num'] + counter - 1):
                 new_column_data.append(0)
             body = {
                 "majorDimension": "COLUMNS",
