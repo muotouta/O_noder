@@ -6,7 +6,7 @@ O_noderにおける、グラフ描画用のコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.3.0'
+__version__ = '1.0.0'
 __date__ = '2025.12.4'
 
 
@@ -68,7 +68,7 @@ class Drawer:
             self.group.append(0)
 
         # グラフオブジェクトの生成
-        self.laout = ig.Graph(self.edges, directed=False).layout(self.LAYOUT_ALGORITHM, dim=3)
+        self.laout = ig.Graph(n=self.N, edges=self.edges, directed=False).layout(self.LAYOUT_ALGORITHM, dim=3)  # 明示的にノード数を伝えることで、他と繋がりのないノードも表示できるようにする。
 
         # 描画に向けた設定
         self.set_coord()  # グラフの要素の座標を計算
@@ -120,16 +120,16 @@ class Drawer:
                 "fz": coords[i][2] * scale
             })
 
-            # ブラウザ側(3d-force-graph)には、インデックスではなく「ID(名前)」でつながりを教えなければならない。
-            links = []
-            for link in self.data['links']:
-                src_idx = link.get('source')
-                tgt_idx = link.get('target')
-                
-                if 0 <= src_idx < n_count and 0 <= tgt_idx < n_count:
-                    links.append({
-                        "source": self.data['nodes'][src_idx]['name'],
-                        "target": self.data['nodes'][tgt_idx]['name']
-                    })
+        # ブラウザ側(3d-force-graph)には、インデックスではなく「ID(名前)」でつながりを教えなければならない。
+        links = []
+        for link in self.data['links']:
+            src_idx = link.get('source')
+            tgt_idx = link.get('target')
+            
+            if 0 <= src_idx < n_count and 0 <= tgt_idx < n_count:
+                links.append({
+                    "source": self.data['nodes'][src_idx]['name'],
+                    "target": self.data['nodes'][tgt_idx]['name']
+                })
 
         return {"nodes": nodes, "links": links}

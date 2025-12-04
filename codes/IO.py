@@ -6,7 +6,7 @@ O_noderにおける、入出力を司るクラスを扱うコード
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.3.0'
+__version__ = '1.0.0'
 __date__ = '2025.12.4'
 
 
@@ -30,6 +30,7 @@ class IO:
     SHEET_NAMES: dict
     QUESTIONS : dict
     ANSWERS: dict
+    CREDS: str
 
     DRIVE_SERVICE: googleapiclient.discovery 
     FORM_SERVICE: googleapiclient.discovery
@@ -68,6 +69,7 @@ class IO:
         self.ANSWERS = ANSWERS
         self.FILE_PATHS = FILE_PATHS
         self.FILE_NAMES = FILE_NAMES
+        self.CREDS = CREDS
 
         # APIサービスを構築
         self.DRIVE_SERVICE = googleapiclient.discovery.build('drive', 'v3', credentials=CREDS)  # Google Drive APIサービスの構築
@@ -260,6 +262,7 @@ class IO:
         """
         participants_formの知り合いの質問を更新するメソッド
         self.new_answersの回答を知り合いの選択肢として追加する。
+        また、フォームの書き換えを行う間はフォームへの回答を停止する。
         """
 
         targe_item_id = self.QUESTIONS['friends']
@@ -316,7 +319,12 @@ class IO:
             # 新しい投稿を反映
             for counter, an_answer in enumerate(self.new_answers):
                 # 回答情報を取得
-                name = f"{self.partic_form_meta_info['all_answers_num']+counter+1}_{an_answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
+
+                if self.partic_form_meta_info['all_answers_num'] == 0:
+                    reg_num = self.partic_form_meta_info['all_answers_num'] + counter + 1 
+                else:
+                    reg_num = self.partic_form_meta_info['all_answers_num'] + counter + 1 - self.partic_form_meta_info['new_answers_num']
+                name = f"{reg_num}_{an_answer.get('answers', {}).get(self.ANSWERS['name'], {}).get('textAnswers', {}).get('answers', [{}])[0].get('value')}"
                 prof_img_id = an_answer.get('answers', {}).get(self.ANSWERS['prof_image'], {}).get('fileUploadAnswers', {}).get('answers', [{}])[0].get('fileId')
 
                 # 採用する画像を選ぶ
@@ -360,7 +368,9 @@ class IO:
             }
 
             # API実行
+            self.change_form_status(False)
             self.FORM_SERVICE.forms().batchUpdate(formId=self.IDS['partic_form'], body=update_body).execute()
+            self.change_form_status(True)
 
         except Exception as e:
             print(f"Error while making \"participants_form\" with new answers in \"IO.update_form()\": {e}")
@@ -458,8 +468,6 @@ class IO:
         """
         datasheetsとparticipants_formのネットワーク情報の選択肢を、既存のものを破壊した後にparticipants_formから作り直すメソッド
         """
-
-
         # datasheetsの内容をすべて消去する。
         for a_sheet in list(self.SHEET_NAMES.keys()):
             try:
@@ -887,33 +895,18 @@ class IO:
 
         # net_info用のデータを作成
         net_line = [name]
-        counter = 0
+        answers_num = self.partic_form_meta_info["all_answers_num"] + self.partic_form_meta_info["new_answers_num"]
+        for i in range(answers_num + 1):  # 名前との分のオフセット1を施す。
+            net_line.append(0)  # 一旦全ての接続情報を0で埋める。
+
         if friends:
-            while counter <= self.partic_form_meta_info["all_answers_num"]:
-                for each in friends:
-                    friend_number = int(each.split("_")[0])  # 先頭の数字を取り出す。
-                    while counter < friend_number:
-                        net_line.append(0)  # 繋がりがない場合は0
-                        counter += 1
-
-                    net_line.append(1)  # 繋がりがある場合は1
-                    counter += 1
-                friends.clear()
-
-                net_line.append(0)  # 繋がりがない場合は0
-                counter += 1
-        else:
-            while counter <= self.partic_form_meta_info["all_answers_num"]:
-                net_line.append(0)  # 繋がりがない場合は0
-                counter += 1
-
-        # form_src用のデータを作成
-        # form_line = [1, 1, 1]
+            friend_nums = [int(x.split("_")[0]) for x in friends]  # 友人の番号をリストにする。
+            for num in friend_nums:
+                net_line[num+1] = 1  # 第1要素は名前なので、その分のオフセット1を施す。
 
         result = {
             "partic" : partic_line,
             "net" : net_line
-            # "form" : form_line
         }
         
         return result
@@ -1073,5 +1066,31 @@ class IO:
                     return sheet['properties']['sheetId']  # これが整数のID
             return None
         except Exception as e:
-            print(f"Error getting sheet ID: {e}")
+            print(f"Error getting sheet ID in \"IO.get_sheet_id\": {e}")
             return None
+
+
+    def change_form_status(self, is_open: bool):
+        """
+        GASを経由してフォームの受付状態を変更する
+        is_open: Trueなら受付開始、Falseなら受付停止
+        """
+        
+        # Apps Script API サービスの構築
+        service = googleapiclient.discovery.build('script', 'v1', credentials=self.CREDS)
+
+        # 実行リクエストの作成
+        request = {
+            "function": "setFormStatus",  # GAS側の関数名
+            "parameters": [
+                self.IDS['partic_form'],  # 引数1: フォームID
+                is_open                   # 引数2: 状態
+            ],
+            "devMode": True  # デバッグ中はTrue推奨（最新の保存コードが実行される）
+        }
+
+        try:
+            response = service.scripts().run(scriptId=self.IDS['app_script'], body=request).execute()
+
+        except Exception as e:
+            print(f"Error in \"IO.change_form_status\": {e}")

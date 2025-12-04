@@ -6,8 +6,8 @@ O_noderの実行ファイル
 """
 
 __author__ = 'Muto Tao'
-__version__ = '0.3.0'
-__date__ = '2025.12.2'
+__version__ = '1.0.0'
+__date__ = '2025.12.4'
 
 import sys
 import time
@@ -28,6 +28,9 @@ from Drawer import Drawer
 IDS = {
     # フォームID(フォーム編集画面のURL https://docs.google.com/forms/d/xxxxxxxxxxxx/edit の xxxxxxxxxxxx の部分)
     'partic_form' : '1G_WnVP-tendDUTvtHpT58wkFxFyq46WjG4Lqx4S9Spw',
+
+    # フォームの回答停止・再開の操作で用いるGoogle App ScriptのデプロイID
+    "app_script" : "AKfycbzWn5kmRD_D5kqqBlBV8O2GRFxHOSydzORI36gSOWaDHNN1XquWLrzzoJSf21piYJg",
 
     # スプレッドシートID（シート編集画面のURL https://docs.google.com/spreadsheets/d/xxxxxxxxxxxx/edit の xxxxxxxxxxxx の部分）
     'raw_answers' : '1VImFfuvKOqnXYdU8mDVrmC3_-Idfp5KeG2FzIe1aCAg',
@@ -75,8 +78,12 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive.metadata.readonly',  # このアプリが作成したわけではないGoogle ドライブ上の特定のファイルの参照
     'https://www.googleapis.com/auth/forms.body',  # Googleフォームのすべてのフォームの参照、編集、作成、削除
     'https://www.googleapis.com/auth/forms.responses.readonly',  # Googleフォームのフォームに対するすべての回答の参照
-    'https://www.googleapis.com/auth/spreadsheets'  # Googleスプレッドシートのすべてのスプレッドシートの参照、編集、作成、削除
+    'https://www.googleapis.com/auth/spreadsheets',  # Googleスプレッドシートのすべてのスプレッドシートの参照、編集、作成、削除
+    'https://www.googleapis.com/auth/script.projects',  # 念のため
+    'https://www.googleapis.com/auth/forms'  # GASがフォームを操作するために必要
+
     ]
+
 
 CREDS: None
 
@@ -85,8 +92,7 @@ app = Flask(__name__)
 drawer: Drawer = None
 an_io: IO = None
 
-background_check_interval = 10  # 新しい回答のチェックを1度行った後次の更新まで最低何秒間を開けるか。
-
+background_check_interval = 5  # 新しい回答のチェックを1度行った後次の更新まで最低何秒間を開けるか。
 
 def init():
     """
@@ -123,6 +129,7 @@ def check_updates_loop():
     バックグラウンドで常に新しい回答がないかチェックし、あればデータを更新して、Drawerを再構築する関数
     """
     global drawer
+    last_executed_hour = -1  
     
     while True:
         # print(f"\rCheck update: {datetime.datetime.now()}", end="") # 現在時刻表示（ログ用）。ログが多すぎると見づらいので適宜調整
@@ -143,7 +150,14 @@ def check_updates_loop():
         except Exception as e:
             print(f"\n[Error] Background loop error: {e}")
 
-        # 待機（API制限等を考慮して少し長めに設定しても良いかもしれません）
+        # 毎時30分ごろにデータベースをリクリエートする。
+        now = datetime.now()
+        if (30 <= now.minute and now.minute <= 35 )and now.hour != last_executed_hour:
+            print("recreating database... ", end="", flush=True)
+            an_io.recreate_databese()
+            print(" → Done.")
+            last_executed_hour = now.hour
+
         time.sleep(background_check_interval)
 
 
@@ -151,7 +165,7 @@ def main():
     global drawer, an_io
 
     # 初期化
-    print("initializing data...", end="", flush=True)
+    print("initializing data... ", end="", flush=True)
     init()
     an_io = IO(IDS, RAW_SHEET, SHEET_NAMES, ANSWERS, QUESTIONS, CREDS, FILE_PATHS, FILE_NAMES)
     print(" → Done.")
@@ -166,12 +180,12 @@ def main():
         data = json.load(f)
     drawer = Drawer(data, FILE_PATHS, FILE_NAMES)
 
-    # 3. 【重要】裏方のループ処理を別スレッドで開始
-    print("Starting server and background task...", end="", flush=True)
+    # 裏方のループ処理を別スレッドで開始
+    print("Starting server and background task... ", end="", flush=True)
     bg_thread = threading.Thread(target=check_updates_loop, daemon=True)  # daemon=True にすると、メインプログラム（Flask）が終了した時にこのスレッドも一緒に終了する。
     bg_thread.start()
 
-    # 4. Webサーバーを起動（これはメインスレッドで動き続け、ブロックする）
+    # Webサーバーを起動（これはメインスレッドで動き続け、ブロックする）
     print(" → Done.")
     app.run(host='0.0.0.0', port=5001, debug=True, use_reloader=False)  # debug=True だとリロード機能が働きスレッドが2重起動することがあるので、本番に近い挙動確認に推奨される use_reloader=False を指定する。
 
