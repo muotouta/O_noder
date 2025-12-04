@@ -16,6 +16,7 @@ import os
 import glob
 import requests
 import json
+import re
 from datetime import datetime, timedelta, timezone
 import googleapiclient.discovery
 
@@ -52,7 +53,7 @@ class IO:
     # APIの制限で1分間に60回までしか書き込みリクエストができず、それを超えるとエラーになるので、リクエストのレートに制限をかけるための、書き込み状況を監視する変数
     timer = time.time()
     write_count = 0  # 書き込み回数を記録
-    COUNT_THRESHOLD = 56  # 連続書き込み回数の上限
+    COUNT_THRESHOLD = 50  # 連続書き込み回数の上限
     LIMIT = 60  # 連続書き込み回数の上限を考える時間の長さ
     
 
@@ -576,7 +577,7 @@ class IO:
         target_dir = self.FILE_PATHS['prof']
         target_imgs = glob.glob(os.path.join(target_dir, '*'))
         for each in target_imgs:
-            img_name = each.split("/")[-1]  # ファイル名を取り出す。
+            img_name = os.path.basename(each)  # ファイル名を取り出す。
             if not img_name == self.FILE_NAMES['no_image_img']:  # self.FILE_NAMES['no_image_img']以外の画像を削除
                 os.remove(each)
 
@@ -816,15 +817,17 @@ class IO:
                     img_id = ans['answers'][self.ANSWERS['prof_image']]['fileUploadAnswers']['answers'][0]['fileId']
                     file_format = ans['answers'][self.ANSWERS['prof_image']]['fileUploadAnswers']['answers'][0]['mimeType'].split("/")[1]
 
-                    if "/" in name:  # 入力された名前に / が入っているとpathの設定がうまくいかなくなるので、 | に置き換える。
-                        name = name.replace('/', '|')
-                    if "\\" in name:  # \ についても同様。
-                        name = name.replace('\\', '|')
+                    # 【修正箇所 1】 Windows禁止文字を一括置換
+                    # \ / : * ? " < > | をすべて _ に置き換える
+                    name = re.sub(r'[\\/:*?"<>|]', '_', name)
 
                     ans_number = self.partic_form_meta_info["all_answers_num"] + i + offset
                     img_uri = base_uri + img_id
                     img_name = f"{ans_number}_{name}.{file_format}"
-                    img_path = self.FILE_PATHS['prof'] + img_name
+                    
+                    # 【修正箇所 2】 パス結合は + ではなく os.path.join を使う
+                    # Windowsでは \、Macでは / を自動で使い分けてくれます
+                    img_path = os.path.join(self.FILE_PATHS['prof'], img_name)
 
                     res = requests.get(img_uri)
                     with open(img_path, 'wb') as f:

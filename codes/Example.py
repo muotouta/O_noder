@@ -12,7 +12,7 @@ __date__ = '2025.12.4'
 import sys
 import time
 import os.path
-import datetime
+from datetime import datetime
 import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -92,7 +92,7 @@ app = Flask(__name__)
 drawer: Drawer = None
 an_io: IO = None
 
-background_check_interval = 5  # 新しい回答のチェックを1度行った後次の更新まで最低何秒間を開けるか。
+background_check_interval = 30  # 新しい回答のチェックを1度行った後次の更新まで最低何秒間を開けるか。API制限エラー対策に長めにとる。
 
 def init():
     """

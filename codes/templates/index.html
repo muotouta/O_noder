@@ -88,7 +88,13 @@
           } else {
             // B. キャッシュにない場合：新しく読み込む（初回のみ）
             const img = new Image();
-            img.src = `/static/images/${node.img}`;
+           if (node.img_id && node.img_id !== 'null') {
+                // 画像IDがある場合はGoogleドライブから直接読み込む
+                img.src = `https://drive.google.com/uc?export=view&id=${node.img_id}`;
+            } else {
+                // IDがない（画像未設定など）場合は従来のローカル画像を使う
+                img.src = `/static/images/${node.img}`;
+            }
             img.crossOrigin = "Anonymous";
 
             img.onload = () => {
@@ -145,14 +151,16 @@
     });
     
     // --- パラメータ設定 ---
-    // --- パラメータ設定 ---
-    let limit_min = 50;   // 下限（固定）
+    const min = 100
+    let limit_min = min;   // 下限（固定）
     let limit_max = 800;  // 上限（updateDataで自動更新される）
-    const zoomMargin = 2.0  // 上限を、グラフ全体が収まる範囲からどれくらい離れたところに設定するか。
+    const zoomMargin = 1.0  // 上限を、グラフ全体が収まる範囲からどれくらい離れたところに設定するか。
+    const cam_height_param = 0.001  // カメラの高さ
 
     // 回転・振動のスピード
     const rotateSpeed = 0.0007; 
-    const verticalSpeed = 0.0005;
+    let verticalSpeed = 0.0005; // const から let に変更
+    const verticalLimit = 1.4;  // 上下の制限角度（ラジアン）。約80度。
     const zoomSpeed = 0.0001; // 大きな距離を行き来するので、速度はゆっくりにします(0.04だと速すぎて酔います)
     const backSpeed = 0.05;  // カメラが振動の範囲外に行った時の復帰のスピード
 
@@ -221,6 +229,14 @@
         zoomPhase += zoomSpeed;
         verticalPhase += verticalSpeed;
 
+        if (verticalPhase > verticalLimit) {
+            verticalPhase = verticalLimit; // 行き過ぎ補正
+            verticalSpeed *= -1;           // 逆向きにする
+        } else if (verticalPhase < -verticalLimit) {
+            verticalPhase = -verticalLimit;
+            verticalSpeed *= -1;
+        }
+
         // 正弦波で新しい距離を決定 (50 〜 limit_max の間を動く)
         nextDist = midpoint + amplitude * Math.sin(zoomPhase);
       }
@@ -233,9 +249,13 @@
       const currentHorizontalAngle = Math.atan2(z, x);
       const newHorizontalAngle = currentHorizontalAngle + rotateSpeed;
 
+      // カメラの高さを微調整
+      const cameraYOffset = nextDist * cam_height_param;
+
       // 球面座標系 → XYZ
       // nextDist を半径として計算
-      const newY = nextDist * Math.sin(verticalPhase);
+      // 計算したY座標からオフセットを引く（カメラを下げる）
+      const newY = nextDist * Math.sin(verticalPhase) - cameraYOffset;
       const horizontalRadius = nextDist * Math.cos(verticalPhase);
       const newX = horizontalRadius * Math.cos(newHorizontalAngle);
       const newZ = horizontalRadius * Math.sin(newHorizontalAngle);
@@ -305,7 +325,7 @@
 
           // 上限・下限の更新
           limit_max = fitDistance; 
-          limit_min = 50; // 固定
+          limit_min = min; // 固定
 
           // ※ deepness は setInterval 内で動的に計算されるため設定不要
 

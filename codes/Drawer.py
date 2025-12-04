@@ -108,13 +108,14 @@ class Drawer:
         for i, node_info in enumerate(self.data['nodes']):
             tmp = glob.glob(os.path.join(self.FILE_PATHS['prof'], f"{node_info['name']}.*"))
             if tmp:  # プロフィール画像が存在する場合
-                img_filename = tmp[0].split("/")[-1]  # 画像ファイル名を指定
+                img_filename = os.path.basename(tmp[0])  # 画像ファイル名を指定
             else:
                 img_filename = self.FILE_NAMES['no_image_img']
 
             nodes.append({
                 "id": node_info.get('name', f"Node_{i}"), # 名前をIDとして使用
                 "img": img_filename,
+                "img_id": node_info.get('img_id'),
                 "fx": coords[i][0] * scale,
                 "fy": coords[i][1] * scale,
                 "fz": coords[i][2] * scale

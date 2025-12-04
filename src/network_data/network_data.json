@@ -187,6 +187,38 @@
     {
       "name": "47_\u307f\u3093\u307f\u3093\u3093",
       "img_id": "null"
+    },
+    {
+      "name": "48_\u5c0f\u91ce\u7530\u7f8e\u7fbd",
+      "img_id": "null"
+    },
+    {
+      "name": "49_Konkohn",
+      "img_id": "null"
+    },
+    {
+      "name": "50_Tasuku Wake",
+      "img_id": "null"
+    },
+    {
+      "name": "51_\u3086\u3046\u304d",
+      "img_id": "null"
+    },
+    {
+      "name": "52_\u3088\u308a\u3088\u308a",
+      "img_id": "null"
+    },
+    {
+      "name": "53_\u82b1\u5b501\u53f7",
+      "img_id": "null"
+    },
+    {
+      "name": "54_\u82b1\u5b502\u53f7",
+      "img_id": "null"
+    },
+    {
+      "name": "55_\u3055\u3093\u3089\u305f\u3001\u308f\u307e",
+      "img_id": "null"
     }
   ],
   "links": [
@@ -528,6 +560,116 @@
     {
       "source": 46,
       "target": 45,
+      "value": 1
+    },
+    {
+      "source": 47,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 47,
+      "target": 5,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 1,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 4,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 6,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 7,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 18,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 21,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 29,
+      "value": 1
+    },
+    {
+      "source": 48,
+      "target": 41,
+      "value": 1
+    },
+    {
+      "source": 49,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 50,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 50,
+      "target": 7,
+      "value": 1
+    },
+    {
+      "source": 50,
+      "target": 49,
+      "value": 1
+    },
+    {
+      "source": 51,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 51,
+      "target": 1,
+      "value": 1
+    },
+    {
+      "source": 51,
+      "target": 2,
+      "value": 1
+    },
+    {
+      "source": 51,
+      "target": 3,
+      "value": 1
+    },
+    {
+      "source": 53,
+      "target": 52,
+      "value": 1
+    },
+    {
+      "source": 54,
+      "target": 0,
+      "value": 1
+    },
+    {
+      "source": 54,
+      "target": 1,
       "value": 1
     }
   ]
