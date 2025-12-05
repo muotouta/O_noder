@@ -13,6 +13,7 @@ __date__ = '2025.12.4'
 import os
 import glob
 import igraph as ig
+import re
 
 
 class Drawer:
@@ -106,7 +107,8 @@ class Drawer:
 
         nodes = []
         for i, node_info in enumerate(self.data['nodes']):
-            tmp = glob.glob(os.path.join(self.FILE_PATHS['prof'], f"{node_info['name']}.*"))
+            safe_name = re.sub(r'[\\/:*?"<>|]', '_', node_info['name'])  # windows禁止記号を _ に置き換える。
+            tmp = glob.glob(os.path.join(self.FILE_PATHS['prof'], f"{safe_name}.*"))
             if tmp:  # プロフィール画像が存在する場合
                 img_filename = os.path.basename(tmp[0])  # 画像ファイル名を指定
             else:
